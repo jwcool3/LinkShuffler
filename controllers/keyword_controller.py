@@ -190,3 +190,63 @@ class KeywordController:
         """
         if not bookmark.title:
             return []
+            
+        # Simple keyword extraction for a single title
+        title = bookmark.title.lower()
+        
+        # Remove common stop words
+        stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'is', 'are', 'on', 'in', 'to', 'for', 'with', 'by', 'at', 'from'}
+        
+        # Clean and tokenize
+        title = re.sub(r'[^\w\s]', ' ', title)  # Replace punctuation with space
+        words = [w for w in title.split() if w not in stop_words and len(w) > 2]
+        
+        # Return unique words
+        return list(set(words))
+    
+    def suggest_category(self, bookmark):
+        """
+        Suggest a category for a bookmark based on its title.
+        
+        Args:
+            bookmark: The bookmark to suggest a category for
+            
+        Returns:
+            str: Suggested category name, or None if no suggestion
+        """
+        # Extract keywords
+        keywords = self.extract_bookmark_keywords(bookmark)
+        if not keywords:
+            return None
+        
+        # Get existing categories
+        categories = [cat.name for cat in self.app.categories if cat.name != "Uncategorized"]
+        if not categories:
+            return None
+        
+        # Check if any keyword matches an existing category
+        for keyword in keywords:
+            for category in categories:
+                if keyword.lower() in category.lower() or category.lower() in keyword.lower():
+                    return category
+        
+        # If no direct match, suggest the most common category among similar bookmarks
+        similar_bookmarks = []
+        for b in self.app.bookmarks:
+            if b != bookmark and b.category != "Uncategorized":
+                b_keywords = self.extract_bookmark_keywords(b)
+                # Check for keyword overlap
+                if any(kw in b_keywords for kw in keywords):
+                    similar_bookmarks.append(b)
+        
+        if similar_bookmarks:
+            # Count categories of similar bookmarks
+            category_counts = {}
+            for b in similar_bookmarks:
+                category_counts[b.category] = category_counts.get(b.category, 0) + 1
+            
+            # Return most common category
+            if category_counts:
+                return max(category_counts.items(), key=lambda x: x[1])[0]
+        
+        return None
