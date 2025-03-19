@@ -12,13 +12,13 @@ class ManageTab:
         
         Args:
             app: The main application instance
-            parent: The parent widget (notebook)
+            parent: The parent widget (frame)
         """
         self.app = app
         self.parent = parent
         
-        # Create main frame
-        self.frame = ttk.Frame(parent)
+        # Use the provided frame directly
+        self.frame = parent
         
         # Create top controls frame
         controls_frame = ttk.Frame(self.frame)
@@ -180,8 +180,12 @@ class ManageTab:
         self.current_page = 0
         self.filtered_bookmarks = []
         
-        # Update UI
-        self.update_ui()
+        # Create a status label for this tab
+        self.status_label = ttk.Label(self.frame, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
+        self.status_label.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Update UI (delay initialization until full setup)
+        self.frame.after(100, self.update_ui)
     
     def update_ui(self):
         """Update the UI state based on application data."""
@@ -249,10 +253,15 @@ class ManageTab:
         # Update page info
         self.page_info_var.set(f"Page {self.current_page + 1} of {total_pages} ({len(self.filtered_bookmarks)} bookmarks)")
         
-        # Update app status
-        self.app.main_window.update_status(
-            f"Displaying {end_idx - start_idx} of {len(self.filtered_bookmarks)} bookmarks"
-        )
+        # Update status
+        status_msg = f"Displaying {end_idx - start_idx} of {len(self.filtered_bookmarks)} bookmarks"
+        
+        # Update app's main window status if available
+        if hasattr(self.app, 'main_window') and self.app.main_window:
+            self.app.main_window.update_status(status_msg)
+        
+        # Also update local status label
+        self.status_label.config(text=status_msg)
     
     def change_page(self, direction):
         """
@@ -559,7 +568,12 @@ class ManageTab:
         if self.app.link_controller.delete_bookmark(bookmark):
             # Update UI
             self.update_ui()
-            self.app.main_window.update_status("Bookmark deleted.")
+            
+            # Update status
+            status_msg = "Bookmark deleted."
+            self.status_label.config(text=status_msg)
+            if hasattr(self.app, 'main_window') and self.app.main_window:
+                self.app.main_window.update_status(status_msg)
     
     def bulk_categorize(self):
         """Categorize multiple selected bookmarks."""
@@ -607,7 +621,12 @@ class ManageTab:
             
             # Update UI
             self.update_ui()
-            self.app.main_window.update_status(f"{len(selection)} bookmarks categorized as '{category}'.")
+            
+            # Update status
+            status_msg = f"{len(selection)} bookmarks categorized as '{category}'."
+            self.status_label.config(text=status_msg)
+            if hasattr(self.app, 'main_window') and self.app.main_window:
+                self.app.main_window.update_status(status_msg)
         
         # Buttons
         button_frame = ttk.Frame(dialog)
@@ -642,7 +661,12 @@ class ManageTab:
         
         # Update UI
         self.update_ui()
-        self.app.main_window.update_status(f"{count} bookmarks deleted.")
+        
+        # Update status
+        status_msg = f"{count} bookmarks deleted."
+        self.status_label.config(text=status_msg)
+        if hasattr(self.app, 'main_window') and self.app.main_window:
+            self.app.main_window.update_status(status_msg)
     
     def reset_filters(self):
         """Reset all filters."""
