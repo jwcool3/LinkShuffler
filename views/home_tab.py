@@ -1,7 +1,6 @@
-import tkinter as tk
 from tkinter import ttk
 import webbrowser
-
+import tkinter as tk
 class HomeTab:
     """
     Home tab view for the BookmarkShuffler application.
@@ -12,13 +11,13 @@ class HomeTab:
         
         Args:
             app: The main application instance
-            parent: The parent widget (notebook)
+            parent: The parent widget (frame)
         """
         self.app = app
         self.parent = parent
         
-        # Create main frame
-        self.frame = ttk.Frame(parent)
+        # Use the provided frame directly
+        self.frame = parent
         
         # Create welcome header
         welcome_frame = ttk.Frame(self.frame)
@@ -44,7 +43,7 @@ class HomeTab:
         self.load_button = ttk.Button(
             button_frame,
             text="Load Bookmarks File",
-            command=self.app.main_window.load_html_callback
+            command=self.load_html_callback
         )
         self.load_button.pack(side=tk.LEFT, padx=5)
         
@@ -52,7 +51,7 @@ class HomeTab:
         self.keyword_button = ttk.Button(
             button_frame,
             text="Detect Keywords & Categorize",
-            command=self.app.main_window.detect_keywords_callback
+            command=self.detect_keywords_callback
         )
         self.keyword_button.pack(side=tk.LEFT, padx=5)
         
@@ -285,3 +284,21 @@ class HomeTab:
             else:
                 # Try adding https:// prefix if missing
                 webbrowser.open('https://' + url)
+
+    def load_html_callback(self):
+        """Callback for loading HTML bookmarks."""
+        bookmarks = self.app.file_controller.load_html_bookmarks()
+        if bookmarks:
+            self.app.bookmarks = bookmarks
+            self.update_ui()
+            # Update other tabs if needed
+            if self.app.main_window:
+                self.app.main_window.update_ui()
+    
+    def detect_keywords_callback(self):
+        """Callback for detecting keywords."""
+        self.app.keyword_controller.auto_categorize_bookmarks()
+        self.update_ui()
+        # Update other tabs if needed
+        if self.app.main_window:
+            self.app.main_window.update_ui()

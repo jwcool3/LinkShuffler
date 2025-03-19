@@ -31,6 +31,9 @@ class BookmarkShufflerApp:
         self.link_controller = LinkController(self)
         self.keyword_controller = KeywordController(self)
         
+        # Set main_window to None initially
+        self.main_window = None
+        
         # Setup UI
         self.main_window = MainWindow(self)
         

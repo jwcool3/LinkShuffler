@@ -31,15 +31,20 @@ class MainWindow:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill='both', padx=5, pady=5)
         
-        # Create tabs
-        self.home_tab = HomeTab(self.app, self.notebook)
-        self.manage_tab = ManageTab(self.app, self.notebook)
-        self.categories_tab = CategoriesTab(self.app, self.notebook)
+        # Create tab frames
+        home_frame = ttk.Frame(self.notebook)
+        manage_frame = ttk.Frame(self.notebook)
+        categories_frame = ttk.Frame(self.notebook)
         
         # Add tabs to notebook
-        self.notebook.add(self.home_tab.frame, text="Home")
-        self.notebook.add(self.manage_tab.frame, text="Manage Links")
-        self.notebook.add(self.categories_tab.frame, text="Categories")
+        self.notebook.add(home_frame, text="Home")
+        self.notebook.add(manage_frame, text="Manage Links")
+        self.notebook.add(categories_frame, text="Categories")
+        
+        # Create tabs
+        self.home_tab = HomeTab(self.app, home_frame)
+        self.manage_tab = ManageTab(self.app, manage_frame)
+        self.categories_tab = CategoriesTab(self.app, categories_frame)
         
         # Create status bar
         self.status_var = tk.StringVar()
@@ -107,9 +112,13 @@ class MainWindow:
     
     def update_ui(self):
         """Update all UI components."""
-        self.home_tab.update_ui()
-        self.manage_tab.update_ui()
-        self.categories_tab.update_ui()
+        if hasattr(self, 'home_tab') and self.home_tab:
+            self.home_tab.update_ui()
+        if hasattr(self, 'manage_tab') and self.manage_tab:
+            self.manage_tab.update_ui()
+        if hasattr(self, 'categories_tab') and self.categories_tab:
+            self.categories_tab.update_ui()
+        
         self.update_status(f"Loaded {len(self.app.bookmarks)} bookmarks in {len(self.app.categories)} categories")
     
     def update_status(self, message):
@@ -143,7 +152,19 @@ class MainWindow:
     
     def new_bookmark_callback(self, event=None):
         """Callback for adding a new bookmark."""
-        self.manage_tab.add_bookmark_dialog()
+        # Access manage_tab through notebook's tabs
+        if hasattr(self, 'manage_tab'):
+            self.manage_tab.add_bookmark_dialog()
+        else:
+            # Find manage_tab in notebook's children
+            for tab in self.notebook.tabs():
+                tab_name = self.notebook.tab(tab, "text")
+                if tab_name == "Manage Links":
+                    # Get the widget and call its method
+                    tab_widget = self.notebook.nametowidget(tab)
+                    if hasattr(tab_widget, 'add_bookmark_dialog'):
+                        tab_widget.add_bookmark_dialog()
+                    break
     
     def detect_keywords_callback(self):
         """Callback for detecting keywords."""

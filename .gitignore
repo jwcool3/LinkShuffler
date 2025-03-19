@@ -1,0 +1,13 @@
+__pycache__/app.cpython-311.pyc
+controllers/__pycache__/__init__.cpython-311.pyc
+controllers/__pycache__/file_controller.cpython-311.pyc
+controllers/__pycache__/keyword_controller.cpython-311.pyc
+controllers/__pycache__/link_controller.cpython-311.pyc
+models/__pycache__/__init__.cpython-311.pyc
+models/__pycache__/bookmark.cpython-311.pyc
+models/__pycache__/category.cpython-311.pyc
+views/__pycache__/__init__.cpython-311.pyc
+views/__pycache__/categories_tab.cpython-311.pyc
+views/__pycache__/home_tab.cpython-311.pyc
+views/__pycache__/main_window.cpython-311.pyc
+views/__pycache__/manage_tab.cpython-311.pyc

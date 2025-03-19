@@ -12,13 +12,13 @@ class CategoriesTab:
         
         Args:
             app: The main application instance
-            parent: The parent widget (notebook)
+            parent: The parent widget (frame)
         """
         self.app = app
         self.parent = parent
         
-        # Create main frame
-        self.frame = ttk.Frame(parent)
+        # Use the provided frame directly
+        self.frame = parent
         
         # Create top controls frame
         controls_frame = ttk.Frame(self.frame)
