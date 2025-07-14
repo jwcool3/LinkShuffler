@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from views.home_tab import HomeTab
 from views.manage_tab import ManageTab
 from views.categories_tab import CategoriesTab
@@ -70,12 +70,9 @@ class MainWindow:
         self.root.grid_rowconfigure(0, weight=1)
     
     def setup_styles(self):
-        """Set up custom styles for ttk widgets."""
-        self.style.configure("TButton", padding=6, relief="flat", background="#ccc")
-        self.style.configure("TNotebook", background="#f0f0f0")
-        self.style.configure("TNotebook.Tab", padding=[10, 2], font=('Arial', 10))
-        self.style.configure("Treeview", font=('Arial', 10))
-        self.style.configure("Treeview.Heading", font=('Arial', 10, 'bold'))
+        """Set up custom styles for the application."""
+        # Configure custom styles here if needed
+        pass
     
     def setup_menu(self):
         """Set up the application menu."""
@@ -85,7 +82,11 @@ class MainWindow:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Load HTML Bookmarks", command=self.load_html_callback)
         file_menu.add_command(label="Load JSON Data", command=self.load_data_callback)
+        file_menu.add_separator()
         file_menu.add_command(label="Save Data", command=self.save_data_callback)
+        file_menu.add_separator()
+        file_menu.add_command(label="Export to CSV", command=self.export_csv_callback)
+        file_menu.add_command(label="Import from CSV", command=self.import_csv_callback)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         menubar.add_cascade(label="File", menu=file_menu)
@@ -94,7 +95,14 @@ class MainWindow:
         edit_menu = tk.Menu(menubar, tearoff=0)
         edit_menu.add_command(label="Add Bookmark", command=self.new_bookmark_callback)
         edit_menu.add_command(label="Detect Keywords", command=self.detect_keywords_callback)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Find Duplicates", command=self.find_duplicates_callback)
         menubar.add_cascade(label="Edit", menu=edit_menu)
+        
+        # Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="Auto-save Settings", command=self.auto_save_settings_callback)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
         
         # View menu
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -149,6 +157,201 @@ class MainWindow:
     def save_data_callback(self, event=None):
         """Callback for saving data."""
         self.app.file_controller.save_data()
+    
+    def export_csv_callback(self):
+        """Callback for exporting bookmarks to CSV."""
+        if not self.app.bookmarks:
+            messagebox.showwarning("No Bookmarks", "No bookmarks to export.")
+            return
+        
+        success = self.app.file_controller.export_to_csv()
+        if success:
+            self.update_status("Bookmarks exported to CSV successfully")
+    
+    def import_csv_callback(self):
+        """Callback for importing bookmarks from CSV."""
+        bookmarks = self.app.file_controller.import_from_csv()
+        if bookmarks:
+            # Add imported bookmarks to existing ones
+            for bookmark in bookmarks:
+                # Check if bookmark already exists
+                exists = any(b.url == bookmark.url for b in self.app.bookmarks)
+                if not exists:
+                    self.app.bookmarks.append(bookmark)
+                    # Add to appropriate category
+                    self.app.link_controller._ensure_category_exists(bookmark.category)
+                    for cat in self.app.categories:
+                        if cat.name == bookmark.category:
+                            cat.add_bookmark(bookmark)
+                            break
+            
+            self.update_ui()
+            self.update_status(f"Imported {len(bookmarks)} bookmarks from CSV")
+    
+    def find_duplicates_callback(self):
+        """Callback for finding duplicate bookmarks."""
+        duplicates = self.app.file_controller.find_duplicates()
+        
+        if not duplicates:
+            messagebox.showinfo("No Duplicates", "No duplicate bookmarks found.")
+            return
+        
+        # Show duplicates dialog
+        self.show_duplicates_dialog(duplicates)
+    
+    def show_duplicates_dialog(self, duplicates):
+        """Show dialog with duplicate bookmarks."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Duplicate Bookmarks Found")
+        dialog.geometry("800x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Create header
+        header_frame = ttk.Frame(dialog)
+        header_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(
+            header_frame,
+            text=f"Found {len(duplicates)} potential duplicate pairs:",
+            font=("Arial", 12, "bold")
+        ).pack(anchor=tk.W)
+        
+        # Create treeview for duplicates
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        columns = ("title1", "url1", "title2", "url2", "reason")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
+        
+        # Define headings
+        tree.heading("title1", text="Title 1")
+        tree.heading("url1", text="URL 1")
+        tree.heading("title2", text="Title 2")
+        tree.heading("url2", text="URL 2")
+        tree.heading("reason", text="Reason")
+        
+        # Configure column widths
+        tree.column("title1", width=150)
+        tree.column("url1", width=200)
+        tree.column("title2", width=150)
+        tree.column("url2", width=200)
+        tree.column("reason", width=100)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack treeview and scrollbar
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate tree with duplicates
+        for bookmark1, bookmark2, reason in duplicates:
+            tree.insert("", tk.END, values=(
+                bookmark1.title,
+                bookmark1.url,
+                bookmark2.title,
+                bookmark2.url,
+                reason
+            ))
+        
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        def delete_selected():
+            """Delete selected duplicate."""
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo("No Selection", "Please select a duplicate pair to resolve.")
+                return
+            
+            item = selection[0]
+            values = tree.item(item, "values")
+            url1, url2 = values[1], values[3]
+            
+            # Show dialog to choose which one to delete
+            choice_dialog = tk.Toplevel(dialog)
+            choice_dialog.title("Choose Bookmark to Delete")
+            choice_dialog.geometry("400x200")
+            choice_dialog.transient(dialog)
+            choice_dialog.grab_set()
+            
+            ttk.Label(choice_dialog, text="Which bookmark would you like to delete?").pack(pady=10)
+            
+            choice_var = tk.StringVar(value="first")
+            ttk.Radiobutton(choice_dialog, text=f"First: {values[0]}", variable=choice_var, value="first").pack(anchor=tk.W, padx=20)
+            ttk.Radiobutton(choice_dialog, text=f"Second: {values[2]}", variable=choice_var, value="second").pack(anchor=tk.W, padx=20)
+            
+            def confirm_delete():
+                url_to_delete = url1 if choice_var.get() == "first" else url2
+                
+                # Find and delete bookmark
+                for bookmark in self.app.bookmarks[:]:
+                    if bookmark.url == url_to_delete:
+                        self.app.link_controller.delete_bookmark(bookmark)
+                        break
+                
+                # Remove from tree
+                tree.delete(item)
+                choice_dialog.destroy()
+                
+                # Update UI
+                self.update_ui()
+                messagebox.showinfo("Success", "Duplicate bookmark deleted.")
+            
+            ttk.Button(choice_dialog, text="Delete", command=confirm_delete).pack(side=tk.LEFT, padx=10, pady=10)
+            ttk.Button(choice_dialog, text="Cancel", command=choice_dialog.destroy).pack(side=tk.LEFT, padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+    
+    def auto_save_settings_callback(self):
+        """Show auto-save settings dialog."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Auto-save Settings")
+        dialog.geometry("300x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Auto-save enabled checkbox
+        auto_save_var = tk.BooleanVar(value=self.app.auto_save_enabled)
+        ttk.Checkbutton(
+            dialog,
+            text="Enable auto-save",
+            variable=auto_save_var
+        ).pack(pady=10)
+        
+        # Auto-save interval
+        ttk.Label(dialog, text="Auto-save interval (minutes):").pack(pady=5)
+        
+        interval_var = tk.IntVar(value=self.app.auto_save_interval // 60000)
+        interval_spin = ttk.Spinbox(
+            dialog,
+            from_=1,
+            to=60,
+            textvariable=interval_var,
+            width=10
+        )
+        interval_spin.pack(pady=5)
+        
+        def apply_settings():
+            self.app.auto_save_enabled = auto_save_var.get()
+            self.app.set_auto_save_interval(interval_var.get())
+            
+            if self.app.auto_save_enabled:
+                self.app.schedule_auto_save()
+            
+            dialog.destroy()
+            self.update_status("Auto-save settings updated")
+        
+        # Buttons
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=20)
+        
+        ttk.Button(button_frame, text="Apply", command=apply_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
     
     def new_bookmark_callback(self, event=None):
         """Callback for adding a new bookmark."""

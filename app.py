@@ -34,6 +34,11 @@ class BookmarkShufflerApp:
         # Set main_window to None initially
         self.main_window = None
         
+        # Auto-save configuration
+        self.auto_save_enabled = True
+        self.auto_save_interval = 300000  # 5 minutes in milliseconds
+        self.auto_save_filename = "auto_save.json"
+        
         # Setup UI
         self.main_window = MainWindow(self)
         
@@ -41,6 +46,9 @@ class BookmarkShufflerApp:
         default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bookmarks.json")
         if os.path.exists(default_path):
             self._load_default_data(default_path)
+        
+        # Start auto-save
+        self.schedule_auto_save()
     
     def run(self):
         """Run the application."""
@@ -69,3 +77,45 @@ class BookmarkShufflerApp:
             self.bookmarks, self.categories = result
             self._ensure_uncategorized_exists()
             self.main_window.update_ui()
+
+    def schedule_auto_save(self):
+        """Schedule the next auto-save operation."""
+        if self.auto_save_enabled:
+            self.root.after(self.auto_save_interval, self.auto_save)
+    
+    def auto_save(self):
+        """Perform auto-save operation."""
+        try:
+            # Only auto-save if there are bookmarks to save
+            if self.bookmarks:
+                self.file_controller.save_data(self.auto_save_filename)
+                # Update status to show auto-save occurred
+                if self.main_window:
+                    self.main_window.update_status("Auto-saved bookmarks")
+        except Exception as e:
+            print(f"Auto-save failed: {e}")
+        finally:
+            # Schedule next auto-save
+            self.schedule_auto_save()
+    
+    def toggle_auto_save(self):
+        """Toggle auto-save functionality on/off."""
+        self.auto_save_enabled = not self.auto_save_enabled
+        if self.auto_save_enabled:
+            self.schedule_auto_save()
+            if self.main_window:
+                self.main_window.update_status("Auto-save enabled")
+        else:
+            if self.main_window:
+                self.main_window.update_status("Auto-save disabled")
+    
+    def set_auto_save_interval(self, minutes):
+        """
+        Set the auto-save interval.
+        
+        Args:
+            minutes (int): Auto-save interval in minutes
+        """
+        self.auto_save_interval = minutes * 60 * 1000  # Convert to milliseconds
+        if self.main_window:
+            self.main_window.update_status(f"Auto-save interval set to {minutes} minutes")
