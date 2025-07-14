@@ -23,7 +23,7 @@ class BookmarkShufflerApp:
         
         # Initialize config manager
         self.config_manager = ConfigManager()
-        self.config = self.config_manager.get_config()
+        self.config = self.config_manager.config
         
         # Apply window settings from config
         self.root.geometry(f"{self.config.window_width}x{self.config.window_height}")
@@ -52,7 +52,7 @@ class BookmarkShufflerApp:
         self.main_window = None
         
         # Initialize main window with config
-        self.main_window = MainWindow(self, root)
+        self.main_window = MainWindow(self)
         
         # Setup auto-save if enabled
         if self.config.auto_save_enabled:
