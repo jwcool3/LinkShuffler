@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from views.home_tab import HomeTab
 from views.manage_tab import ManageTab
+from views.enhanced_manage_tab import EnhancedManageTab
 from views.categories_tab import CategoriesTab
 
 class MainWindow:
@@ -17,6 +18,9 @@ class MainWindow:
         """
         self.app = app
         self.root = app.root
+        
+        # Enhanced mode flag
+        self.enhanced_mode = False
         
         # Apply a theme
         self.style = ttk.Style()
@@ -44,7 +48,11 @@ class MainWindow:
         # Create tabs
         self.home_tab = HomeTab(self.app, home_frame)
         self.manage_tab = ManageTab(self.app, manage_frame)
+        self.enhanced_manage_tab = None  # Will be created when needed
         self.categories_tab = CategoriesTab(self.app, categories_frame)
+        
+        # Store frame references
+        self.manage_frame = manage_frame
         
         # Create status bar
         self.status_var = tk.StringVar()
@@ -109,6 +117,8 @@ class MainWindow:
         view_menu.add_command(label="Home", command=lambda: self.notebook.select(0))
         view_menu.add_command(label="Manage Links", command=lambda: self.notebook.select(1))
         view_menu.add_command(label="Categories", command=lambda: self.notebook.select(2))
+        view_menu.add_separator()
+        view_menu.add_command(label="Toggle Enhanced Mode", command=self.toggle_enhanced_mode)
         menubar.add_cascade(label="View", menu=view_menu)
         
         # Help menu
@@ -118,12 +128,39 @@ class MainWindow:
         
         self.root.config(menu=menubar)
     
+    def toggle_enhanced_mode(self):
+        """Toggle between original and enhanced manage tab"""
+        self.enhanced_mode = not self.enhanced_mode
+        
+        # Clear the manage frame
+        for widget in self.manage_frame.winfo_children():
+            widget.destroy()
+        
+        if self.enhanced_mode:
+            # Create enhanced manage tab
+            self.enhanced_manage_tab = EnhancedManageTab(self.app, self.manage_frame)
+            self.manage_tab = None  # Clear reference to original tab
+            self.update_status("Enhanced mode enabled - Advanced search, sort, and grouping available")
+        else:
+            # Create original manage tab
+            self.manage_tab = ManageTab(self.app, self.manage_frame)
+            self.enhanced_manage_tab = None  # Clear reference to enhanced tab
+            self.update_status("Standard mode enabled")
+    
+    def get_current_manage_tab(self):
+        """Get the currently active manage tab"""
+        return self.enhanced_manage_tab if self.enhanced_mode else self.manage_tab
+
     def update_ui(self):
         """Update all UI components."""
         if hasattr(self, 'home_tab') and self.home_tab:
             self.home_tab.update_ui()
-        if hasattr(self, 'manage_tab') and self.manage_tab:
-            self.manage_tab.update_ui()
+        
+        # Update the current manage tab
+        current_manage_tab = self.get_current_manage_tab()
+        if current_manage_tab:
+            current_manage_tab.update_ui()
+        
         if hasattr(self, 'categories_tab') and self.categories_tab:
             self.categories_tab.update_ui()
         
@@ -355,19 +392,15 @@ class MainWindow:
     
     def new_bookmark_callback(self, event=None):
         """Callback for adding a new bookmark."""
-        # Access manage_tab through notebook's tabs
-        if hasattr(self, 'manage_tab'):
-            self.manage_tab.add_bookmark_dialog()
+        current_tab = self.get_current_manage_tab()
+        if current_tab:
+            if hasattr(current_tab, 'add_bookmark_dialog'):
+                current_tab.add_bookmark_dialog()
+            elif hasattr(current_tab, 'add_bookmark'):
+                current_tab.add_bookmark()
         else:
-            # Find manage_tab in notebook's children
-            for tab in self.notebook.tabs():
-                tab_name = self.notebook.tab(tab, "text")
-                if tab_name == "Manage Links":
-                    # Get the widget and call its method
-                    tab_widget = self.notebook.nametowidget(tab)
-                    if hasattr(tab_widget, 'add_bookmark_dialog'):
-                        tab_widget.add_bookmark_dialog()
-                    break
+            # Fallback - create a simple dialog
+            messagebox.showinfo("Add Bookmark", "Please switch to the Manage Links tab to add bookmarks.")
     
     def detect_keywords_callback(self):
         """Callback for detecting keywords."""

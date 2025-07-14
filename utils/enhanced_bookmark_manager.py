@@ -40,6 +40,15 @@ class SearchFilter:
     case_sensitive: bool = False
     regex_enabled: bool = False
 
+    def __post_init__(self):
+        """Initialize default values for mutable fields"""
+        if self.categories is None:
+            self.categories = []
+        if self.domains is None:
+            self.domains = []
+        if self.tags is None:
+            self.tags = []
+
 
 class EnhancedBookmarkManager:
     """Enhanced bookmark management with advanced features"""
@@ -117,6 +126,10 @@ class EnhancedBookmarkManager:
             if hasattr(bookmark, 'description'):
                 search_text += f" {bookmark.description}"
             
+            # Add keywords to search text
+            if hasattr(bookmark, 'keywords') and bookmark.keywords:
+                search_text += f" {' '.join(bookmark.keywords)}"
+            
             if not search_filter.case_sensitive:
                 search_text = search_text.lower()
             
@@ -157,7 +170,7 @@ class EnhancedBookmarkManager:
     def _filter_by_tags(self, bookmarks: List, tags: List[str]) -> List:
         """Filter bookmarks by tags"""
         return [b for b in bookmarks 
-                if hasattr(b, 'tags') and any(tag in b.tags for tag in tags)]
+                if hasattr(b, 'keywords') and b.keywords and any(tag in b.keywords for tag in tags)]
     
     def _filter_by_date(self, bookmarks: List, date_from: datetime.date, date_to: datetime.date) -> List:
         """Filter bookmarks by date range"""
@@ -351,8 +364,8 @@ class EnhancedBookmarkManager:
             return bookmark.title[0].upper() if bookmark.title else "#"
         
         elif group_by == GroupBy.TAG:
-            if hasattr(bookmark, 'tags') and bookmark.tags:
-                return bookmark.tags[0]  # Use first tag
+            if hasattr(bookmark, 'keywords') and bookmark.keywords:
+                return bookmark.keywords[0]  # Use first keyword
             return "Untagged"
         
         else:
@@ -656,49 +669,4 @@ class SortConfigDialog:
     def cancel(self):
         """Cancel the dialog"""
         self.result = None
-        self.dialog.destroy()
-
-
-# ===============================
-# USAGE EXAMPLE
-# ===============================
-
-def demonstrate_enhanced_features():
-    """Demonstrate the enhanced features"""
-    
-    # Mock app and bookmarks for demonstration
-    class MockApp:
-        def __init__(self):
-            self.bookmarks = []
-            self.categories = []
-    
-    app = MockApp()
-    manager = EnhancedBookmarkManager(app)
-    
-    # Example advanced search
-    search_filter = SearchFilter(
-        query="python",
-        categories=["Programming", "Education"],
-        min_rating=3,
-        fuzzy_threshold=0.7,
-        case_sensitive=False
-    )
-    
-    # Example multi-criteria sorting
-    sort_criteria = [
-        ("rating", SortOrder.DESC),
-        ("date_added", SortOrder.DESC),
-        ("title", SortOrder.ASC)
-    ]
-    
-    # Example grouping
-    groups = manager.group_bookmarks(app.bookmarks, GroupBy.CATEGORY)
-    
-    print("Enhanced Bookmark Manager Features Ready!")
-    print("- Advanced search with fuzzy matching")
-    print("- Multi-criteria sorting")
-    print("- Flexible grouping options")
-    print("- Enhanced UI dialogs")
-
-if __name__ == "__main__":
-    demonstrate_enhanced_features()
+        self.dialog.destroy() 
