@@ -1,5 +1,5 @@
 # Enhanced Manage Tab with Advanced Search, Sort, and Grouping
-# This provides enhanced functionality for the manage tab
+# This provides enhanced functionality for the manage tab with performance optimizations
 
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -7,23 +7,27 @@ import webbrowser
 import sys
 import os
 from typing import Dict, List
+import time
 
 # Add the parent directory to the path to import utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.enhanced_bookmark_manager import (
     EnhancedBookmarkManager, SearchFilter, SortOrder, GroupBy,
-    AdvancedSearchDialog, SortConfigDialog
+    AdvancedSearchDialog, SortConfigDialog, LazyBookmarkLoader
 )
 from utils.validation import validate_and_normalize_url
 
 
 class EnhancedManageTab:
-    """Enhanced manage tab with advanced search, sort, and grouping features"""
+    """Enhanced manage tab with advanced search, sort, and grouping features plus performance optimizations"""
     
     def __init__(self, app, parent):
         self.app = app
         self.parent = parent
         self.frame = parent
+        
+        # Get config settings
+        self.config = getattr(app, 'config', None)
         
         # Initialize enhanced manager
         self.enhanced_manager = EnhancedBookmarkManager(app)
@@ -35,15 +39,46 @@ class EnhancedManageTab:
         self.current_search_filter = SearchFilter()
         self.current_sort = [("title", SortOrder.ASC)]
         
-        # Pagination
+        # Performance and pagination from config
         self.current_page = 0
-        self.items_per_page = 25
+        self.items_per_page = self.config.default_page_size if self.config else 50
+        self.total_pages = 0
+        self.lazy_loader = None
+        self.search_debounce_timer = None
+        self.search_debounce_delay = self.config.search_debounce_delay if self.config else 300
+        self.last_search_time = 0
+        
+        # Performance monitoring
+        self.performance_stats = {}
+        self.show_performance_monitor = self.config.show_performance_monitor if self.config else True
         
         self.create_widgets()
         self.update_ui()
+        
+        # Initialize lazy loading for large collections
+        self._setup_lazy_loading()
+    
+    def _setup_lazy_loading(self):
+        """Setup lazy loading if needed"""
+        threshold = self.config.lazy_loading_threshold if self.config else 100
+        if len(self.app.bookmarks) > threshold:
+            self.lazy_loader = LazyBookmarkLoader(self.app.bookmarks, self.items_per_page)
+            self.enhanced_manager.set_lazy_loading(True, threshold)
     
     def create_widgets(self):
-        """Create the enhanced UI widgets"""
+        """Create the enhanced UI widgets with performance optimizations"""
+        
+        # ======================
+        # PERFORMANCE MONITOR
+        # ======================
+        if self.show_performance_monitor:
+            perf_frame = ttk.Frame(self.frame)
+            perf_frame.pack(fill=tk.X, padx=10, pady=2)
+            
+            self.perf_label = ttk.Label(perf_frame, text="Performance: Ready", font=("Arial", 8))
+            self.perf_label.pack(side=tk.LEFT)
+            
+            ttk.Button(perf_frame, text="Stats", command=self.show_performance_stats).pack(side=tk.RIGHT)
         
         # ======================
         # SEARCH AND FILTER BAR
@@ -51,7 +86,7 @@ class EnhancedManageTab:
         search_frame = ttk.LabelFrame(self.frame, text="Search & Filter")
         search_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Quick search
+        # Quick search with configurable debouncing
         quick_search_frame = ttk.Frame(search_frame)
         quick_search_frame.pack(fill=tk.X, padx=5, pady=5)
         
@@ -144,6 +179,30 @@ class EnhancedManageTab:
         )
         self.group_by.pack(side=tk.LEFT, padx=5)
         self.group_by.bind("<<ComboboxSelected>>", lambda e: self.apply_grouping())
+        
+        # ======================
+        # PAGINATION CONTROLS
+        # ======================
+        pagination_frame = ttk.Frame(self.frame)
+        pagination_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.page_label = ttk.Label(pagination_frame, text="Page 1 of 1")
+        self.page_label.pack(side=tk.LEFT)
+        
+        ttk.Button(pagination_frame, text="◀◀", command=self.first_page).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pagination_frame, text="◀", command=self.prev_page).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pagination_frame, text="▶", command=self.next_page).pack(side=tk.LEFT, padx=2)
+        ttk.Button(pagination_frame, text="▶▶", command=self.last_page).pack(side=tk.LEFT, padx=2)
+        
+        # Items per page
+        ttk.Label(pagination_frame, text="Items per page:").pack(side=tk.RIGHT, padx=(10, 5))
+        self.items_per_page_var = tk.StringVar(value=str(self.items_per_page))
+        items_combo = ttk.Combobox(
+            pagination_frame, textvariable=self.items_per_page_var,
+            values=["25", "50", "100", "200"], state="readonly", width=8
+        )
+        items_combo.pack(side=tk.RIGHT, padx=5)
+        items_combo.bind("<<ComboboxSelected>>", self.change_items_per_page)
         
         # ======================
         # BOOKMARKS DISPLAY
@@ -247,21 +306,32 @@ class EnhancedManageTab:
         self.context_menu.add_command(label="Copy Title", command=self.copy_title)
     
     def update_ui(self):
-        """Update the UI with current data."""
+        """Update the UI with current data and performance optimizations."""
+        start_time = time.time()
+        
         # Update category filter
         categories = sorted([c.name for c in self.app.categories])
         self.category_filter['values'] = ["All"] + categories
         
-        # Update domain filter
+        # Update domain filter (use cached domain extraction)
         domains = list(set(self.enhanced_manager._get_domain(b) for b in self.app.bookmarks))
         domains = [d for d in domains if d]  # Remove empty domains
         self.domain_filter['values'] = ["All"] + sorted(domains)
         
+        # Refresh search index
+        self.enhanced_manager.refresh_indexes()
+        
         # Apply current filters
         self.apply_filters()
+        
+        # Update performance stats
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def quick_search(self):
-        """Perform quick search"""
+        """Perform quick search with performance timing"""
+        start_time = time.time()
+        
         query = self.quick_search_var.get().strip()
         if query:
             search_filter = SearchFilter(query=query)
@@ -269,24 +339,36 @@ class EnhancedManageTab:
         else:
             self.current_bookmarks = self.app.bookmarks.copy()
         
+        self.current_page = 0  # Reset to first page
         self.refresh_display()
+        
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def on_search_change(self, event=None):
-        """Handle search text change for real-time search"""
-        # Implement real-time search with a small delay
-        if hasattr(self, '_search_timer'):
-            self.frame.after_cancel(self._search_timer)
-        self._search_timer = self.frame.after(300, self.quick_search)
+        """Handle search text change for real-time search with debouncing"""
+        # Cancel previous timer
+        if self.search_debounce_timer:
+            self.frame.after_cancel(self.search_debounce_timer)
+        
+        # Set new timer for debounced search
+        self.search_debounce_timer = self.frame.after(self.search_debounce_delay, self.quick_search)
     
     def advanced_search(self):
-        """Show advanced search dialog"""
+        """Show advanced search dialog with performance timing"""
+        start_time = time.time()
+        
         dialog = AdvancedSearchDialog(self.frame, self.app)
         self.frame.wait_window(dialog.dialog)
         
         if dialog.result:
             self.current_search_filter = dialog.result
             self.current_bookmarks = self.enhanced_manager.advanced_search(dialog.result)
+            self.current_page = 0  # Reset to first page
             self.refresh_display()
+        
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def clear_search(self):
         """Clear all search filters"""
@@ -296,10 +378,13 @@ class EnhancedManageTab:
         self.domain_filter_var.set("All")
         self.current_search_filter = SearchFilter()
         self.current_bookmarks = self.app.bookmarks.copy()
+        self.current_page = 0
         self.refresh_display()
     
     def apply_filters(self):
-        """Apply current filters"""
+        """Apply current filters with performance timing"""
+        start_time = time.time()
+        
         bookmarks = self.app.bookmarks.copy()
         
         # Apply category filter
@@ -313,16 +398,22 @@ class EnhancedManageTab:
             min_rating = int(rating[0])  # Extract number from "1+", "2+", etc.
             bookmarks = [b for b in bookmarks if b.rating and b.rating >= min_rating]
         
-        # Apply domain filter
+        # Apply domain filter (use cached domain extraction)
         domain = self.domain_filter_var.get()
         if domain != "All":
             bookmarks = [b for b in bookmarks if self.enhanced_manager._get_domain(b) == domain]
         
         self.current_bookmarks = bookmarks
+        self.current_page = 0  # Reset to first page
         self.refresh_display()
+        
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def apply_sort(self):
-        """Apply current sort settings"""
+        """Apply current sort settings with performance timing"""
+        start_time = time.time()
+        
         field = self.sort_field_var.get()
         order = SortOrder.ASC if self.sort_order_var.get() == "ascending" else SortOrder.DESC
         
@@ -330,6 +421,9 @@ class EnhancedManageTab:
             self.current_bookmarks, field, order
         )
         self.refresh_display()
+        
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def configure_multi_sort(self):
         """Show multi-sort configuration dialog"""
@@ -337,14 +431,21 @@ class EnhancedManageTab:
         self.frame.wait_window(dialog.dialog)
         
         if dialog.result:
+            start_time = time.time()
+            
             self.current_sort = dialog.result
             self.current_bookmarks = self.enhanced_manager.multi_sort(
                 self.current_bookmarks, dialog.result
             )
             self.refresh_display()
+            
+            self.last_search_time = time.time() - start_time
+            self._update_performance_display()
     
     def apply_grouping(self):
-        """Apply current grouping settings"""
+        """Apply current grouping settings with performance timing"""
+        start_time = time.time()
+        
         group_by = self.group_by_var.get()
         
         if group_by == "None":
@@ -360,26 +461,50 @@ class EnhancedManageTab:
             self.display_notebook.select(1)  # Switch to grouped view
         
         self.refresh_display()
+        
+        self.last_search_time = time.time() - start_time
+        self._update_performance_display()
     
     def refresh_display(self):
-        """Refresh the display with current bookmarks"""
+        """Refresh the display with current bookmarks using pagination"""
         if self.current_group_by is None:
             self.refresh_list_view()
         else:
             self.refresh_grouped_view()
         
+        # Update pagination
+        self._update_pagination_display()
+        
         # Update status
         total = len(self.current_bookmarks)
-        self.status_label.config(text=f"Showing {total} bookmarks")
+        showing_start = self.current_page * self.items_per_page + 1
+        showing_end = min(showing_start + self.items_per_page - 1, total)
+        
+        if total > 0:
+            self.status_label.config(text=f"Showing {showing_start}-{showing_end} of {total} bookmarks")
+        else:
+            self.status_label.config(text="No bookmarks found")
     
     def refresh_list_view(self):
-        """Refresh the list view"""
+        """Refresh the list view with pagination"""
         # Clear existing items
         for item in self.tree.get_children():
             self.tree.delete(item)
         
-        # Add bookmarks
-        for bookmark in self.current_bookmarks:
+        # Calculate pagination
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.current_bookmarks))
+        
+        # Get bookmarks for current page
+        if self.lazy_loader and len(self.current_bookmarks) > self.lazy_loader.lazy_loading_threshold:
+            # Use lazy loading
+            page_bookmarks = self.lazy_loader.get_page(self.current_page)
+        else:
+            # Use regular pagination
+            page_bookmarks = self.current_bookmarks[start_idx:end_idx]
+        
+        # Add bookmarks to tree
+        for bookmark in page_bookmarks:
             domain = self.enhanced_manager._get_domain(bookmark)
             rating_display = str(bookmark.rating) if bookmark.rating else ""
             
@@ -392,18 +517,37 @@ class EnhancedManageTab:
             ))
     
     def refresh_grouped_view(self):
-        """Refresh the grouped view"""
+        """Refresh the grouped view with performance optimizations"""
         # Clear existing groups
         for widget in self.groups_content.winfo_children():
             widget.destroy()
         
+        # Get limits from config
+        max_groups = self.config.max_groups_display if self.config else 20
+        max_bookmarks_per_group = self.config.max_bookmarks_per_group if self.config else 10
+        
+        groups_displayed = 0
+        
         # Create group displays
         for group_name, bookmarks in self.grouped_bookmarks.items():
+            if groups_displayed >= max_groups:
+                # Add a label for remaining groups
+                remaining_groups = len(self.grouped_bookmarks) - groups_displayed
+                remaining_label = ttk.Label(
+                    self.groups_content, 
+                    text=f"... and {remaining_groups} more groups (use filters to narrow results)"
+                )
+                remaining_label.pack(fill=tk.X, padx=5, pady=5)
+                break
+            
             group_frame = ttk.LabelFrame(self.groups_content, text=f"{group_name} ({len(bookmarks)})")
             group_frame.pack(fill=tk.X, padx=5, pady=5)
             
+            # Limit bookmarks displayed per group
+            display_bookmarks = bookmarks[:max_bookmarks_per_group]
+            
             # Create mini treeview for group
-            group_tree = ttk.Treeview(group_frame, columns=("title", "url", "rating"), show="headings", height=min(5, len(bookmarks)))
+            group_tree = ttk.Treeview(group_frame, columns=("title", "url", "rating"), show="headings", height=min(5, len(display_bookmarks)))
             group_tree.heading("title", text="Title")
             group_tree.heading("url", text="URL")
             group_tree.heading("rating", text="Rating")
@@ -412,7 +556,7 @@ class EnhancedManageTab:
             group_tree.column("url", width=300)
             group_tree.column("rating", width=60)
             
-            for bookmark in bookmarks:
+            for bookmark in display_bookmarks:
                 rating_display = str(bookmark.rating) if bookmark.rating else ""
                 group_tree.insert("", tk.END, values=(
                     bookmark.title,
@@ -421,6 +565,17 @@ class EnhancedManageTab:
                 ))
             
             group_tree.pack(fill=tk.X, padx=5, pady=5)
+            
+            # Add "show more" label if there are more bookmarks
+            if len(bookmarks) > max_bookmarks_per_group:
+                more_label = ttk.Label(
+                    group_frame, 
+                    text=f"... and {len(bookmarks) - max_bookmarks_per_group} more bookmarks",
+                    font=("Arial", 8)
+                )
+                more_label.pack(padx=5, pady=2)
+            
+            groups_displayed += 1
     
     def sort_by_column(self, column):
         """Sort by clicking column header"""
@@ -487,7 +642,10 @@ class EnhancedManageTab:
             messagebox.showinfo("No Selection", "Please select a bookmark to delete.")
             return
         
-        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected bookmark?"):
+        # Check config for confirmation setting
+        confirm_deletions = self.config.confirm_deletions if self.config else True
+        
+        if not confirm_deletions or messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected bookmark?"):
             item = selection[0]
             values = self.tree.item(item, "values")
             url = values[1]
@@ -534,7 +692,10 @@ class EnhancedManageTab:
             messagebox.showinfo("No Selection", "Please select bookmarks to delete.")
             return
         
-        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selection)} bookmarks?"):
+        # Check config for confirmation setting
+        confirm_deletions = self.config.confirm_deletions if self.config else True
+        
+        if not confirm_deletions or messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete {len(selection)} bookmarks?"):
             for item in selection:
                 values = self.tree.item(item, "values")
                 url = values[1]
@@ -684,3 +845,95 @@ class EnhancedManageTab:
         
         dialog.columnconfigure(1, weight=1)
         title_entry.focus_set() 
+
+    # ======================
+    # PERFORMANCE METHODS
+    # ======================
+    
+    def show_performance_stats(self):
+        """Show performance statistics dialog"""
+        stats = self.enhanced_manager.get_performance_stats()
+        
+        dialog = tk.Toplevel(self.frame)
+        dialog.title("Performance Statistics")
+        dialog.geometry("400x300")
+        dialog.transient(self.frame)
+        dialog.grab_set()
+        
+        text_widget = tk.Text(dialog, wrap=tk.WORD)
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        stats_text = f"""Performance Statistics:
+
+Total Bookmarks: {stats['total_bookmarks']}
+Search Index Built: {stats['search_index_built']}
+Using Lazy Loading: {stats['using_lazy_loading']}
+Using Database: {stats['using_database']}
+Search History Size: {stats['search_history_size']}
+Background Tasks: {stats['background_tasks']}
+
+Current Page: {self.current_page + 1} of {self.total_pages}
+Items Per Page: {self.items_per_page}
+Last Search Time: {self.last_search_time:.3f}s
+
+Memory Usage:
+- Current Bookmarks: {len(self.current_bookmarks)} items
+- Grouped Bookmarks: {len(self.grouped_bookmarks)} groups
+"""
+        
+        text_widget.insert(tk.END, stats_text)
+        text_widget.config(state=tk.DISABLED)
+        
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+    
+    def _update_performance_display(self):
+        """Update performance display"""
+        stats = self.enhanced_manager.get_performance_stats()
+        perf_text = f"Bookmarks: {stats['total_bookmarks']} | "
+        perf_text += f"Indexed: {'Yes' if stats['search_index_built'] else 'No'} | "
+        perf_text += f"Page: {self.current_page + 1}/{self.total_pages}"
+        
+        self.perf_label.config(text=perf_text)
+    
+    # ======================
+    # PAGINATION METHODS
+    # ======================
+    
+    def change_items_per_page(self, event=None):
+        """Change items per page"""
+        try:
+            new_items_per_page = int(self.items_per_page_var.get())
+            self.items_per_page = new_items_per_page
+            self.current_page = 0
+            self._setup_lazy_loading()
+            self.refresh_display()
+        except ValueError:
+            pass
+    
+    def first_page(self):
+        """Go to first page"""
+        self.current_page = 0
+        self.refresh_display()
+    
+    def prev_page(self):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.refresh_display()
+    
+    def next_page(self):
+        """Go to next page"""
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.refresh_display()
+    
+    def last_page(self):
+        """Go to last page"""
+        self.current_page = max(0, self.total_pages - 1)
+        self.refresh_display()
+    
+    def _update_pagination_display(self):
+        """Update pagination display"""
+        self.total_pages = max(1, (len(self.current_bookmarks) + self.items_per_page - 1) // self.items_per_page)
+        self.page_label.config(text=f"Page {self.current_page + 1} of {self.total_pages}")
+        self._update_performance_display() 

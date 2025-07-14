@@ -5,6 +5,7 @@ import os
 from controllers import FileController, LinkController, KeywordController
 from models import Bookmark, Category
 from views.main_window import MainWindow
+from utils.config_manager import ConfigManager
 
 class BookmarkShufflerApp:
     """
@@ -19,7 +20,23 @@ class BookmarkShufflerApp:
         """
         self.root = root
         self.root.title("Bookmark Manager")
-        self.root.geometry("1000x700")
+        
+        # Initialize config manager
+        self.config_manager = ConfigManager()
+        self.config = self.config_manager.get_config()
+        
+        # Apply window settings from config
+        self.root.geometry(f"{self.config.window_width}x{self.config.window_height}")
+        if self.config.window_maximized:
+            self.root.state('zoomed')
+        
+        # Set theme
+        try:
+            style = tk.ttk.Style()
+            style.theme_use(self.config.theme)
+        except tk.TclError:
+            # Fallback to default theme if configured theme is not available
+            pass
         
         # Setup application state
         self.bookmarks = []
@@ -34,13 +51,15 @@ class BookmarkShufflerApp:
         # Set main_window to None initially
         self.main_window = None
         
-        # Auto-save configuration
-        self.auto_save_enabled = True
-        self.auto_save_interval = 300000  # 5 minutes in milliseconds
-        self.auto_save_filename = "auto_save.json"
+        # Initialize main window with config
+        self.main_window = MainWindow(self, root)
         
-        # Setup UI
-        self.main_window = MainWindow(self)
+        # Setup auto-save if enabled
+        if self.config.auto_save_enabled:
+            self.setup_auto_save()
+        
+        # Bind window close event to save config
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Load default JSON file if it exists
         default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bookmarks.json")
@@ -48,7 +67,36 @@ class BookmarkShufflerApp:
             self._load_default_data(default_path)
         
         # Start auto-save
-        self.schedule_auto_save()
+        # self.schedule_auto_save() # This line is removed as per the new_code, as auto-save is now handled by setup_auto_save
+    
+    def setup_auto_save(self):
+        """Setup auto-save functionality"""
+        def auto_save():
+            if hasattr(self.main_window, 'manage_tab'):
+                # Save current data
+                self.file_controller.save_to_file(self.config.auto_save_filename)
+            
+            # Schedule next auto-save
+            self.root.after(self.config.auto_save_interval * 1000, auto_save)
+        
+        # Start auto-save timer
+        self.root.after(self.config.auto_save_interval * 1000, auto_save)
+    
+    def on_closing(self):
+        """Handle application closing"""
+        # Save window state
+        if self.root.state() == 'zoomed':
+            self.config.window_maximized = True
+        else:
+            self.config.window_maximized = False
+            self.config.window_width = self.root.winfo_width()
+            self.config.window_height = self.root.winfo_height()
+        
+        # Save config
+        self.config_manager.save_config()
+        
+        # Close application
+        self.root.destroy()
     
     def run(self):
         """Run the application."""
@@ -78,25 +126,7 @@ class BookmarkShufflerApp:
             self._ensure_uncategorized_exists()
             self.main_window.update_ui()
 
-    def schedule_auto_save(self):
-        """Schedule the next auto-save operation."""
-        if self.auto_save_enabled:
-            self.root.after(self.auto_save_interval, self.auto_save)
-    
-    def auto_save(self):
-        """Perform auto-save operation."""
-        try:
-            # Only auto-save if there are bookmarks to save
-            if self.bookmarks:
-                self.file_controller.save_data(self.auto_save_filename)
-                # Update status to show auto-save occurred
-                if self.main_window:
-                    self.main_window.update_status("Auto-saved bookmarks")
-        except Exception as e:
-            print(f"Auto-save failed: {e}")
-        finally:
-            # Schedule next auto-save
-            self.schedule_auto_save()
+    # schedule_auto_save and auto_save methods are removed as per the new_code, as auto-save is now handled by setup_auto_save
     
     def toggle_auto_save(self):
         """Toggle auto-save functionality on/off."""

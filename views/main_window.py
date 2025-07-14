@@ -126,6 +126,13 @@ class MainWindow:
         help_menu.add_command(label="About", command=self.show_about)
         menubar.add_cascade(label="Help", menu=help_menu)
         
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_command(label="Preferences", command=self.show_preferences)
+        settings_menu.add_separator()
+        settings_menu.add_command(label="Reset to Defaults", command=self.reset_settings)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        
         self.root.config(menu=menubar)
     
     def toggle_enhanced_mode(self):
@@ -439,3 +446,53 @@ class MainWindow:
             text="OK",
             command=about_win.destroy
         ).pack(pady=20)
+    
+    def show_preferences(self):
+        """Show preferences dialog"""
+        if hasattr(self.app, 'config_manager'):
+            from utils.config_manager import SettingsDialog
+            dialog = SettingsDialog(self.root, self.app.config_manager)
+            self.root.wait_window(dialog.dialog)
+            
+            # Apply any changes that affect the UI
+            self.apply_config_changes()
+        else:
+            messagebox.showinfo("Settings", "Settings not available in this version.")
+    
+    def reset_settings(self):
+        """Reset settings to defaults"""
+        if hasattr(self.app, 'config_manager'):
+            if messagebox.askyesno("Reset Settings", "Are you sure you want to reset all settings to defaults?"):
+                self.app.config_manager.reset_to_defaults()
+                self.apply_config_changes()
+                messagebox.showinfo("Settings Reset", "Settings have been reset to defaults. Please restart the application for all changes to take effect.")
+        else:
+            messagebox.showinfo("Settings", "Settings not available in this version.")
+    
+    def apply_config_changes(self):
+        """Apply configuration changes to the UI"""
+        if hasattr(self.app, 'config'):
+            config = self.app.config
+            
+            # Apply theme
+            try:
+                style = ttk.Style()
+                style.theme_use(config.theme)
+            except tk.TclError:
+                pass
+            
+            # Apply font settings
+            try:
+                font_config = (config.font_family, config.font_size)
+                # This would need to be applied to specific widgets
+                # For now, just update the style
+                style.configure('.', font=font_config)
+            except:
+                pass
+            
+            # Update enhanced mode if needed
+            if config.enhanced_mode_default != self.enhanced_mode:
+                self.toggle_enhanced_mode()
+            
+            # Refresh the current tab
+            self.update_ui()

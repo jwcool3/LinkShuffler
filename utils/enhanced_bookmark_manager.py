@@ -9,7 +9,257 @@ from difflib import SequenceMatcher
 from urllib.parse import urlparse
 import tkinter as tk
 from tkinter import ttk
+from functools import lru_cache
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
+import os
 
+
+# ===============================
+# PERFORMANCE OPTIMIZATIONS
+# ===============================
+
+class PerformanceOptimizations:
+    """Performance optimization utilities for bookmark management"""
+    
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def cached_domain_extraction(url: str) -> str:
+        """Cache domain extraction results for better performance"""
+        try:
+            domain = urlparse(url).netloc
+            return domain.replace('www.', '').lower()
+        except Exception:
+            return ""
+    
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def cached_url_validation(url: str) -> bool:
+        """Cache URL validation results"""
+        try:
+            result = urlparse(url)
+            return all([result.scheme, result.netloc])
+        except Exception:
+            return False
+
+
+class LazyBookmarkLoader:
+    """Lazy loading for large bookmark collections"""
+    
+    def __init__(self, bookmarks: List, page_size: int = 50):
+        self.bookmarks = bookmarks
+        self.page_size = page_size
+        self.loaded_pages = {}
+        self.total_pages = (len(bookmarks) + page_size - 1) // page_size
+    
+    def get_page(self, page_num: int) -> List:
+        """Get a specific page of bookmarks"""
+        if page_num < 0 or page_num >= self.total_pages:
+            return []
+        
+        if page_num not in self.loaded_pages:
+            start = page_num * self.page_size
+            end = min(start + self.page_size, len(self.bookmarks))
+            self.loaded_pages[page_num] = self.bookmarks[start:end]
+        
+        return self.loaded_pages[page_num]
+    
+    def clear_cache(self):
+        """Clear the page cache"""
+        self.loaded_pages.clear()
+
+
+class BackgroundProcessor:
+    """Background processing for expensive operations"""
+    
+    def __init__(self, max_workers: int = 2):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.running_tasks = {}
+    
+    def submit_task(self, task_id: str, func, *args, **kwargs):
+        """Submit a task to run in background"""
+        if task_id in self.running_tasks:
+            return self.running_tasks[task_id]
+        
+        future = self.executor.submit(func, *args, **kwargs)
+        self.running_tasks[task_id] = future
+        
+        # Clean up completed tasks
+        def cleanup(f):
+            if task_id in self.running_tasks:
+                del self.running_tasks[task_id]
+        
+        future.add_done_callback(cleanup)
+        return future
+    
+    def shutdown(self):
+        """Shutdown the executor"""
+        self.executor.shutdown(wait=True)
+
+
+class SearchIndex:
+    """Efficient search indexing for fast lookups"""
+    
+    def __init__(self):
+        self.title_index = {}
+        self.url_index = {}
+        self.keyword_index = {}
+        self.category_index = {}
+        self.is_built = False
+    
+    def build_index(self, bookmarks: List):
+        """Build search index for fast lookups"""
+        self.clear_index()
+        
+        for bookmark in bookmarks:
+            # Index title words
+            title_words = self._tokenize(bookmark.title.lower())
+            for word in title_words:
+                if word not in self.title_index:
+                    self.title_index[word] = set()
+                self.title_index[word].add(bookmark)
+            
+            # Index URL words
+            url_words = self._tokenize(bookmark.url.lower())
+            for word in url_words:
+                if word not in self.url_index:
+                    self.url_index[word] = set()
+                self.url_index[word].add(bookmark)
+            
+            # Index keywords
+            if hasattr(bookmark, 'keywords') and bookmark.keywords:
+                for keyword in bookmark.keywords:
+                    keyword_words = self._tokenize(keyword.lower())
+                    for word in keyword_words:
+                        if word not in self.keyword_index:
+                            self.keyword_index[word] = set()
+                        self.keyword_index[word].add(bookmark)
+            
+            # Index category
+            category_words = self._tokenize(bookmark.category.lower())
+            for word in category_words:
+                if word not in self.category_index:
+                    self.category_index[word] = set()
+                self.category_index[word].add(bookmark)
+        
+        self.is_built = True
+    
+    def _tokenize(self, text: str) -> List[str]:
+        """Simple tokenization with minimum word length"""
+        return [word.strip() for word in re.split(r'[^\w]+', text) if len(word.strip()) > 2]
+    
+    def search(self, query: str, search_fields: List[str] = None) -> List:
+        """Fast indexed search"""
+        if not self.is_built:
+            return []
+        
+        if search_fields is None:
+            search_fields = ['title', 'url', 'keywords', 'category']
+        
+        query_words = self._tokenize(query.lower())
+        if not query_words:
+            return []
+        
+        results = set()
+        
+        for word in query_words:
+            word_results = set()
+            
+            if 'title' in search_fields and word in self.title_index:
+                word_results.update(self.title_index[word])
+            
+            if 'url' in search_fields and word in self.url_index:
+                word_results.update(self.url_index[word])
+            
+            if 'keywords' in search_fields and word in self.keyword_index:
+                word_results.update(self.keyword_index[word])
+            
+            if 'category' in search_fields and word in self.category_index:
+                word_results.update(self.category_index[word])
+            
+            if not results:
+                results = word_results
+            else:
+                results = results.intersection(word_results)
+        
+        return list(results)
+    
+    def clear_index(self):
+        """Clear all indexes"""
+        self.title_index.clear()
+        self.url_index.clear()
+        self.keyword_index.clear()
+        self.category_index.clear()
+        self.is_built = False
+
+
+class DatabaseManager:
+    """SQLite database for large bookmark collections"""
+    
+    def __init__(self, db_path: str = "bookmarks.db"):
+        self.db_path = db_path
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize SQLite database with indexes"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT DEFAULT 'Uncategorized',
+                rating INTEGER,
+                date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                keywords TEXT,
+                description TEXT
+            )
+        ''')
+        
+        # Add indexes for performance
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_category ON bookmarks(category)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rating ON bookmarks(rating)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_date ON bookmarks(date_added)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_title ON bookmarks(title)')
+        
+        conn.commit()
+        conn.close()
+    
+    def search_bookmarks(self, query: str, limit: int = 100) -> List[Dict]:
+        """Fast database search with LIKE queries"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM bookmarks 
+            WHERE title LIKE ? OR url LIKE ? OR keywords LIKE ?
+            ORDER BY date_added DESC 
+            LIMIT ?
+        ''', (f'%{query}%', f'%{query}%', f'%{query}%', limit))
+        
+        columns = [desc[0] for desc in cursor.description]
+        results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        conn.close()
+        return results
+    
+    def get_bookmarks_by_category(self, category: str) -> List[Dict]:
+        """Get bookmarks by category"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM bookmarks WHERE category = ? ORDER BY title', (category,))
+        columns = [desc[0] for desc in cursor.description]
+        results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        conn.close()
+        return results
+
+
+# ===============================
+# ORIGINAL CLASSES WITH OPTIMIZATIONS
+# ===============================
 
 class SortOrder(Enum):
     ASC = "ascending"
@@ -51,7 +301,7 @@ class SearchFilter:
 
 
 class EnhancedBookmarkManager:
-    """Enhanced bookmark management with advanced features"""
+    """Enhanced bookmark management with advanced features and performance optimizations"""
     
     def __init__(self, app):
         self.app = app
@@ -60,13 +310,59 @@ class EnhancedBookmarkManager:
         self.current_group = None
         self.grouped_bookmarks = {}
         
+        # Get config settings
+        self.config = getattr(app, 'config', None)
+        
+        # Performance optimizations
+        self.search_index = SearchIndex()
+        self.background_processor = BackgroundProcessor(max_workers=2)
+        self.lazy_loader = None
+        self.db_manager = None
+        
+        # Performance settings from config
+        self.use_indexing = self.config.use_search_indexing if self.config else True
+        self.use_lazy_loading = self.config.use_lazy_loading if self.config else True
+        self.lazy_loading_threshold = self.config.lazy_loading_threshold if self.config else 100
+        self.use_database = self.config.use_database_mode if self.config else False
+        self.background_processing = self.config.background_processing if self.config else True
+        
+        # Initialize search index in background if enabled
+        if self.background_processing:
+            self._rebuild_search_index()
+        
+    def _rebuild_search_index(self):
+        """Rebuild search index in background"""
+        if self.use_indexing and len(self.app.bookmarks) > 10:
+            self.background_processor.submit_task(
+                "rebuild_index",
+                self.search_index.build_index,
+                self.app.bookmarks
+            )
+    
+    def enable_database_mode(self, db_path: str = "bookmarks.db"):
+        """Enable database mode for very large collections"""
+        self.use_database = True
+        self.db_manager = DatabaseManager(db_path)
+        # TODO: Sync bookmarks to database
+    
+    def set_lazy_loading(self, enabled: bool, threshold: int = None):
+        """Configure lazy loading settings"""
+        self.use_lazy_loading = enabled
+        if threshold is not None:
+            self.lazy_loading_threshold = threshold
+        elif self.config:
+            self.lazy_loading_threshold = self.config.lazy_loading_threshold
+        
+        if enabled and len(self.app.bookmarks) > self.lazy_loading_threshold:
+            self.lazy_loader = LazyBookmarkLoader(self.app.bookmarks)
+    
     # ===============================
     # ENHANCED SEARCH FUNCTIONALITY
     # ===============================
     
     def advanced_search(self, search_filter: SearchFilter) -> List:
         """
-        Perform advanced search with multiple criteria
+        Perform advanced search with multiple criteria and performance optimizations
         
         Args:
             search_filter: SearchFilter object with search criteria
@@ -76,10 +372,31 @@ class EnhancedBookmarkManager:
         """
         bookmarks = self.app.bookmarks.copy()
         
-        # Text search
-        if search_filter.query:
+        # Use indexed search for text queries if available
+        if (search_filter.query and 
+            self.use_indexing and 
+            self.search_index.is_built and
+            len(bookmarks) > 50):
+            
+            # Fast indexed search
+            indexed_results = self.search_index.search(search_filter.query)
+            if indexed_results:
+                bookmarks = indexed_results
+        elif search_filter.query:
+            # Fallback to regular text search
             bookmarks = self._text_search(bookmarks, search_filter)
         
+        # Apply other filters
+        bookmarks = self._apply_filters(bookmarks, search_filter)
+        
+        # Store search in history
+        if search_filter.query:
+            self._add_to_search_history(search_filter.query)
+        
+        return bookmarks
+    
+    def _apply_filters(self, bookmarks: List, search_filter: SearchFilter) -> List:
+        """Apply non-text filters to bookmarks"""
         # Category filter
         if search_filter.categories:
             bookmarks = [b for b in bookmarks if b.category in search_filter.categories]
@@ -104,10 +421,6 @@ class EnhancedBookmarkManager:
         # Date filter
         if search_filter.date_from or search_filter.date_to:
             bookmarks = self._filter_by_date(bookmarks, search_filter.date_from, search_filter.date_to)
-        
-        # Store search in history
-        if search_filter.query:
-            self._add_to_search_history(search_filter.query)
         
         return bookmarks
     
@@ -155,16 +468,12 @@ class EnhancedBookmarkManager:
         return results
     
     def _filter_by_domains(self, bookmarks: List, domains: List[str]) -> List:
-        """Filter bookmarks by domain"""
+        """Filter bookmarks by domain using cached extraction"""
         filtered = []
         for bookmark in bookmarks:
-            try:
-                domain = urlparse(bookmark.url).netloc
-                domain = domain.replace('www.', '')
-                if any(d in domain for d in domains):
-                    filtered.append(bookmark)
-            except Exception:
-                continue
+            domain = self._get_domain(bookmark)
+            if any(d in domain for d in domains):
+                filtered.append(bookmark)
         return filtered
     
     def _filter_by_tags(self, bookmarks: List, tags: List[str]) -> List:
@@ -191,8 +500,9 @@ class EnhancedBookmarkManager:
         """Add search query to history"""
         if query not in self.search_history:
             self.search_history.insert(0, query)
-            # Keep only last 20 searches
-            self.search_history = self.search_history[:20]
+            # Keep only configured number of searches
+            max_history = self.config.max_search_history if self.config else 20
+            self.search_history = self.search_history[:max_history]
     
     def get_search_suggestions(self, partial_query: str) -> List[str]:
         """Get search suggestions based on history and bookmark content"""
@@ -203,14 +513,28 @@ class EnhancedBookmarkManager:
             if partial_query.lower() in query.lower():
                 suggestions.append(query)
         
-        # From bookmark titles
-        for bookmark in self.app.bookmarks:
-            words = bookmark.title.split()
+        # From bookmark titles (optimized)
+        if self.search_index.is_built:
+            # Use index for faster suggestions
+            words = self.search_index._tokenize(partial_query.lower())
             for word in words:
-                if (len(word) > 3 and 
-                    partial_query.lower() in word.lower() and 
-                    word not in suggestions):
-                    suggestions.append(word)
+                if word in self.search_index.title_index:
+                    for bookmark in list(self.search_index.title_index[word])[:5]:  # Limit results
+                        title_words = bookmark.title.split()
+                        for title_word in title_words:
+                            if (len(title_word) > 3 and 
+                                partial_query.lower() in title_word.lower() and 
+                                title_word not in suggestions):
+                                suggestions.append(title_word)
+        else:
+            # Fallback to linear search
+            for bookmark in self.app.bookmarks[:50]:  # Limit for performance
+                words = bookmark.title.split()
+                for word in words:
+                    if (len(word) > 3 and 
+                        partial_query.lower() in word.lower() and 
+                        word not in suggestions):
+                        suggestions.append(word)
         
         return suggestions[:10]  # Limit to 10 suggestions
     
@@ -220,7 +544,7 @@ class EnhancedBookmarkManager:
     
     def sort_bookmarks(self, bookmarks: List, field: str, order: SortOrder = SortOrder.ASC) -> List:
         """
-        Sort bookmarks by various criteria
+        Sort bookmarks by various criteria with performance optimizations
         
         Args:
             bookmarks: List of bookmarks to sort
@@ -232,6 +556,15 @@ class EnhancedBookmarkManager:
         """
         reverse = (order == SortOrder.DESC)
         
+        # Use cached domain extraction for domain sorting
+        if field == "domain":
+            return sorted(bookmarks, key=self._get_domain, reverse=reverse)
+        
+        # For large collections, consider using background sorting
+        if len(bookmarks) > 1000:
+            return self._background_sort(bookmarks, field, reverse)
+        
+        # Regular sorting
         if field == "title":
             return sorted(bookmarks, key=lambda x: x.title.lower(), reverse=reverse)
         
@@ -249,9 +582,6 @@ class EnhancedBookmarkManager:
                          key=lambda x: x.date_added if hasattr(x, 'date_added') and x.date_added else datetime.datetime.min,
                          reverse=reverse)
         
-        elif field == "domain":
-            return sorted(bookmarks, key=self._get_domain, reverse=reverse)
-        
         elif field == "length":
             return sorted(bookmarks, key=lambda x: len(x.title), reverse=reverse)
         
@@ -268,13 +598,15 @@ class EnhancedBookmarkManager:
         else:
             return bookmarks
     
+    def _background_sort(self, bookmarks: List, field: str, reverse: bool) -> List:
+        """Sort large collections in background"""
+        # For now, just use regular sorting
+        # In a real implementation, this would use the background processor
+        return sorted(bookmarks, key=lambda x: getattr(x, field, ""), reverse=reverse)
+    
     def _get_domain(self, bookmark) -> str:
-        """Extract domain from bookmark URL"""
-        try:
-            domain = urlparse(bookmark.url).netloc
-            return domain.replace('www.', '').lower()
-        except Exception:
-            return ""
+        """Extract domain from bookmark URL using cached extraction"""
+        return PerformanceOptimizations.cached_domain_extraction(bookmark.url)
     
     def _smart_sort(self, bookmarks: List, reverse: bool = False) -> List:
         """Smart sorting algorithm combining multiple factors"""
@@ -319,7 +651,7 @@ class EnhancedBookmarkManager:
     
     def group_bookmarks(self, bookmarks: List, group_by: GroupBy) -> Dict[str, List]:
         """
-        Group bookmarks by various criteria
+        Group bookmarks by various criteria with performance optimizations
         
         Args:
             bookmarks: List of bookmarks to group
@@ -330,6 +662,10 @@ class EnhancedBookmarkManager:
         """
         groups = {}
         
+        # For large collections, use background processing if enabled
+        if len(bookmarks) > 500 and self.background_processing:
+            return self._background_group(bookmarks, group_by)
+        
         for bookmark in bookmarks:
             group_key = self._get_group_key(bookmark, group_by)
             
@@ -339,6 +675,18 @@ class EnhancedBookmarkManager:
             groups[group_key].append(bookmark)
         
         # Sort groups by key
+        return dict(sorted(groups.items()))
+    
+    def _background_group(self, bookmarks: List, group_by: GroupBy) -> Dict[str, List]:
+        """Group large collections in background"""
+        # For now, just use regular grouping
+        # In a real implementation, this would use the background processor
+        groups = {}
+        for bookmark in bookmarks:
+            group_key = self._get_group_key(bookmark, group_by)
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(bookmark)
         return dict(sorted(groups.items()))
     
     def _get_group_key(self, bookmark, group_by: GroupBy) -> str:
@@ -406,6 +754,34 @@ class EnhancedBookmarkManager:
             return "Unknown"
         
         return max(domain_counts.items(), key=lambda x: x[1])[0]
+    
+    # ===============================
+    # PERFORMANCE MANAGEMENT
+    # ===============================
+    
+    def refresh_indexes(self):
+        """Refresh search indexes when bookmarks change"""
+        if self.use_indexing:
+            self._rebuild_search_index()
+        
+        if self.use_lazy_loading and len(self.app.bookmarks) > self.lazy_loading_threshold:
+            self.lazy_loader = LazyBookmarkLoader(self.app.bookmarks)
+    
+    def cleanup(self):
+        """Clean up background processes"""
+        if self.background_processor:
+            self.background_processor.shutdown()
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics"""
+        return {
+            'total_bookmarks': len(self.app.bookmarks),
+            'search_index_built': self.search_index.is_built,
+            'using_lazy_loading': self.use_lazy_loading and self.lazy_loader is not None,
+            'using_database': self.use_database,
+            'search_history_size': len(self.search_history),
+            'background_tasks': len(self.background_processor.running_tasks) if self.background_processor else 0
+        }
 
 
 # ===============================
