@@ -36,30 +36,89 @@ class HomeTab:
         ).pack(anchor=tk.W)
         
         # Create button frame
-        button_frame = ttk.Frame(self.frame)
+        button_frame = ttk.LabelFrame(self.frame, text="Quick Actions")
         button_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        # File operations row
+        file_row = ttk.Frame(button_frame)
+        file_row.pack(fill=tk.X, pady=5, padx=5)
+        
+        ttk.Label(file_row, text="File Operations:", font=('Arial', 10, 'bold')).pack(anchor=tk.W)
+        
+        file_buttons = ttk.Frame(file_row)
+        file_buttons.pack(fill=tk.X, pady=2)
         
         # Load bookmarks button
         self.load_button = ttk.Button(
-            button_frame,
-            text="Load Bookmarks File",
-            command=self.load_html_callback
+            file_buttons,
+            text="📁 Load Bookmarks File",
+            command=self.load_html_callback,
+            width=20
         )
         self.load_button.pack(side=tk.LEFT, padx=5)
         
-        # Detect keywords button
+        # Categorization row
+        categorization_row = ttk.Frame(button_frame)
+        categorization_row.pack(fill=tk.X, pady=5, padx=5)
+        
+        ttk.Label(categorization_row, text="Auto-Categorization:", font=('Arial', 10, 'bold')).pack(anchor=tk.W)
+        
+        categorization_buttons = ttk.Frame(categorization_row)
+        categorization_buttons.pack(fill=tk.X, pady=2)
+        
+        # Detect keywords button (legacy)
         self.keyword_button = ttk.Button(
-            button_frame,
-            text="Detect Keywords & Categorize",
-            command=self.detect_keywords_callback
+            categorization_buttons,
+            text="🔍 Detect Keywords",
+            command=self.detect_keywords_callback,
+            width=18
         )
-        self.keyword_button.pack(side=tk.LEFT, padx=5)
+        self.keyword_button.pack(side=tk.LEFT, padx=2)
+        
+        # Smart categorization button (new enhanced)
+        self.smart_categorize_button = ttk.Button(
+            categorization_buttons,
+            text="🧠 Smart Categorization",
+            command=self.smart_categorization_callback,
+            width=20
+        )
+        self.smart_categorize_button.pack(side=tk.LEFT, padx=2)
+        
+        # Quick auto-categorize button
+        self.quick_categorize_button = ttk.Button(
+            categorization_buttons,
+            text="⚡ Quick Auto-Categorize",
+            command=self.quick_auto_categorize_callback,
+            width=22
+        )
+        self.quick_categorize_button.pack(side=tk.LEFT, padx=2)
+        
+        # Description row for categorization
+        desc_frame = ttk.Frame(categorization_row)
+        desc_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(desc_frame, text="• Detect Keywords: Traditional TF-IDF keyword extraction", 
+                 font=('Arial', 8), foreground='gray').pack(anchor=tk.W, padx=20)
+        ttk.Label(desc_frame, text="• Smart Categorization: AI-powered analysis with platform detection", 
+                 font=('Arial', 8), foreground='gray').pack(anchor=tk.W, padx=20)
+        ttk.Label(desc_frame, text="• Quick Auto-Categorize: Instant categorization without dialog", 
+                 font=('Arial', 8), foreground='gray').pack(anchor=tk.W, padx=20)
+        
+        # Discovery row
+        discovery_row = ttk.Frame(button_frame)
+        discovery_row.pack(fill=tk.X, pady=5, padx=5)
+        
+        ttk.Label(discovery_row, text="Discovery:", font=('Arial', 10, 'bold')).pack(anchor=tk.W)
+        
+        discovery_buttons = ttk.Frame(discovery_row)
+        discovery_buttons.pack(fill=tk.X, pady=2)
         
         # Shuffle links button
         self.shuffle_button = ttk.Button(
-            button_frame,
-            text="Shuffle Links",
-            command=self.shuffle_links
+            discovery_buttons,
+            text="🎲 Shuffle Links",
+            command=self.shuffle_links,
+            width=18
         )
         self.shuffle_button.pack(side=tk.LEFT, padx=5)
         
@@ -298,6 +357,22 @@ class HomeTab:
     def detect_keywords_callback(self):
         """Callback for detecting keywords."""
         self.app.keyword_controller.auto_categorize_bookmarks()
+        self.update_ui()
+        # Update other tabs if needed
+        if self.app.main_window:
+            self.app.main_window.update_ui()
+    
+    def smart_categorization_callback(self):
+        """Callback for smart categorization."""
+        self.app.enhanced_keyword_controller.analyze_bookmarks_intelligent()
+        self.update_ui()
+        # Update other tabs if needed
+        if self.app.main_window:
+            self.app.main_window.update_ui()
+    
+    def quick_auto_categorize_callback(self):
+        """Callback for quick auto-categorization."""
+        self.app.enhanced_keyword_controller.quick_auto_categorize()
         self.update_ui()
         # Update other tabs if needed
         if self.app.main_window:

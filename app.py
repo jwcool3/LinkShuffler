@@ -3,6 +3,7 @@ from tkinter import ttk
 import os
 
 from controllers import FileController, LinkController, KeywordController
+from controllers.enhanced_keyword_controller import EnhancedKeywordController
 from models import Bookmark, Category
 from views.main_window import MainWindow
 from utils.config_manager import ConfigManager
@@ -47,6 +48,7 @@ class BookmarkShufflerApp:
         self.file_controller = FileController(self)
         self.link_controller = LinkController(self)
         self.keyword_controller = KeywordController(self)
+        self.enhanced_keyword_controller = EnhancedKeywordController(self)
         
         # Set main_window to None initially
         self.main_window = None

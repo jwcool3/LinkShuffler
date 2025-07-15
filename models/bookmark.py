@@ -1,3 +1,5 @@
+from datetime import datetime
+
 class Bookmark:
     """
     Represents a bookmark with URL, title, category, and rating.
@@ -17,6 +19,7 @@ class Bookmark:
         self.category = category
         self.rating = rating
         self.keywords = []  # Keywords extracted from the title
+        self.date_added = datetime.now()  # Add date when bookmark is created
     
     def __str__(self):
         """String representation of the bookmark."""
@@ -33,7 +36,8 @@ class Bookmark:
             "title": self.title,
             "category": self.category,
             "rating": self.rating,
-            "keywords": self.keywords
+            "keywords": self.keywords,
+            "date_added": self.date_added.isoformat()
         }
     
     @classmethod
@@ -46,4 +50,14 @@ class Bookmark:
             rating=data.get("rating")
         )
         bookmark.keywords = data.get("keywords", [])
+        
+        # Handle date_added field
+        if "date_added" in data:
+            try:
+                bookmark.date_added = datetime.fromisoformat(data["date_added"])
+            except (ValueError, TypeError):
+                bookmark.date_added = datetime.now()
+        else:
+            bookmark.date_added = datetime.now()
+            
         return bookmark

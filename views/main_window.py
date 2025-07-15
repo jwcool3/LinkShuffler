@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 from views.home_tab import HomeTab
 from views.manage_tab import ManageTab
 from views.enhanced_manage_tab import EnhancedManageTab
@@ -102,7 +102,10 @@ class MainWindow:
         # Edit menu
         edit_menu = tk.Menu(menubar, tearoff=0)
         edit_menu.add_command(label="Add Bookmark", command=self.new_bookmark_callback)
+        edit_menu.add_separator()
         edit_menu.add_command(label="Detect Keywords", command=self.detect_keywords_callback)
+        edit_menu.add_command(label="Smart Categorization", command=self.smart_categorization_callback)
+        edit_menu.add_command(label="Quick Auto-Categorize", command=self.quick_auto_categorize_callback)
         edit_menu.add_separator()
         edit_menu.add_command(label="Find Duplicates", command=self.find_duplicates_callback)
         menubar.add_cascade(label="Edit", menu=edit_menu)
@@ -414,6 +417,16 @@ class MainWindow:
         self.app.keyword_controller.auto_categorize_bookmarks()
         self.update_ui()
     
+    def smart_categorization_callback(self):
+        """Callback for smart categorization."""
+        self.app.enhanced_keyword_controller.analyze_bookmarks_intelligent()
+        self.update_ui()
+    
+    def quick_auto_categorize_callback(self):
+        """Callback for quick auto-categorization."""
+        self.app.enhanced_keyword_controller.quick_auto_categorize()
+        self.update_ui()
+    
     def show_about(self):
         """Show the about dialog."""
         about_win = tk.Toplevel(self.root)
@@ -483,11 +496,10 @@ class MainWindow:
             
             # Apply font settings
             try:
-                font_config = (config.font_family, config.font_size)
-                # This would need to be applied to specific widgets
-                # For now, just update the style
-                style.configure('.', font=font_config)
-            except:
+                # Apply font settings to various widgets
+                default_font = tkfont.nametofont("TkDefaultFont")
+                default_font.configure(size=config.font_size)
+            except Exception:
                 pass
             
             # Update enhanced mode if needed
@@ -496,3 +508,24 @@ class MainWindow:
             
             # Refresh the current tab
             self.update_ui()
+    
+    def refresh_all_tabs(self):
+        """Refresh all tabs to reflect changes."""
+        # Update home tab
+        if hasattr(self, 'home_tab'):
+            self.home_tab.update_ui()
+        
+        # Update manage tab
+        if hasattr(self, 'manage_tab'):
+            self.manage_tab.update_ui()
+        
+        # Update categories tab
+        if hasattr(self, 'categories_tab'):
+            self.categories_tab.update_ui()
+        
+        # Update enhanced manage tab if it exists
+        if hasattr(self, 'enhanced_manage_tab'):
+            self.enhanced_manage_tab.update_ui()
+        
+        # Update main UI
+        self.update_ui()

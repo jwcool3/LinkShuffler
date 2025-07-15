@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import webbrowser
+from datetime import datetime
 
 class CategoriesTab:
     """
@@ -19,6 +20,10 @@ class CategoriesTab:
         
         # Use the provided frame directly
         self.frame = parent
+        
+        # Current sort settings
+        self.sort_column = "title"
+        self.sort_reverse = False
         
         # Create top controls frame
         controls_frame = ttk.Frame(self.frame)
@@ -63,27 +68,59 @@ class CategoriesTab:
         right_frame = ttk.Frame(paned_window)
         paned_window.add(right_frame, weight=2)
         
+        # Bookmarks header frame
+        bookmarks_header_frame = ttk.Frame(right_frame)
+        bookmarks_header_frame.pack(fill=tk.X, padx=5, pady=5)
+        
         # Bookmarks label
-        self.bookmarks_label = ttk.Label(right_frame, text="Bookmarks")
-        self.bookmarks_label.pack(anchor=tk.W, padx=5, pady=5)
+        self.bookmarks_label = ttk.Label(bookmarks_header_frame, text="Bookmarks")
+        self.bookmarks_label.pack(side=tk.LEFT, anchor=tk.W)
+        
+        # Sort controls
+        sort_frame = ttk.Frame(bookmarks_header_frame)
+        sort_frame.pack(side=tk.RIGHT)
+        
+        ttk.Label(sort_frame, text="Sort by:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.sort_var = tk.StringVar(value="title")
+        sort_combo = ttk.Combobox(
+            sort_frame,
+            textvariable=self.sort_var,
+            values=["title", "url", "rating", "date_added"],
+            state="readonly",
+            width=12
+        )
+        sort_combo.pack(side=tk.LEFT, padx=(0, 5))
+        sort_combo.bind("<<ComboboxSelected>>", self.on_sort_change)
+        
+        # Sort order button
+        self.sort_order_button = ttk.Button(
+            sort_frame,
+            text="↑",
+            width=3,
+            command=self.toggle_sort_order
+        )
+        self.sort_order_button.pack(side=tk.LEFT)
         
         # Bookmarks treeview with scrollbar
         bookmarks_frame = ttk.Frame(right_frame)
         bookmarks_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Create treeview
-        columns = ("title", "url", "rating")
+        # Create treeview with date column
+        columns = ("title", "url", "rating", "date_added")
         self.bookmarks_tree = ttk.Treeview(bookmarks_frame, columns=columns, show="headings")
         
-        # Define headings
-        self.bookmarks_tree.heading("title", text="Title")
-        self.bookmarks_tree.heading("url", text="URL")
-        self.bookmarks_tree.heading("rating", text="Rating")
+        # Define headings with sorting
+        self.bookmarks_tree.heading("title", text="Title", command=lambda: self.sort_by_column("title"))
+        self.bookmarks_tree.heading("url", text="URL", command=lambda: self.sort_by_column("url"))
+        self.bookmarks_tree.heading("rating", text="Rating", command=lambda: self.sort_by_column("rating"))
+        self.bookmarks_tree.heading("date_added", text="Date Added", command=lambda: self.sort_by_column("date_added"))
         
         # Set column widths
         self.bookmarks_tree.column("title", width=200, minwidth=150)
-        self.bookmarks_tree.column("url", width=300, minwidth=150)
+        self.bookmarks_tree.column("url", width=250, minwidth=150)
         self.bookmarks_tree.column("rating", width=50, minwidth=50)
+        self.bookmarks_tree.column("date_added", width=100, minwidth=80)
         
         # Add scrollbar
         bookmarks_scrollbar = ttk.Scrollbar(bookmarks_frame, orient=tk.VERTICAL, command=self.bookmarks_tree.yview)
@@ -155,15 +192,27 @@ class CategoriesTab:
         # Get bookmarks in category
         bookmarks = self.app.link_controller.get_bookmarks_by_category(category_name)
         
+        # Sort bookmarks
+        sorted_bookmarks = self.sort_bookmarks(bookmarks)
+        
         # Display bookmarks
-        for bookmark in bookmarks:
+        for bookmark in sorted_bookmarks:
+            # Get date added (handle both enhanced and regular bookmarks)
+            date_str = "N/A"
+            if hasattr(bookmark, 'date_added') and bookmark.date_added:
+                if isinstance(bookmark.date_added, datetime):
+                    date_str = bookmark.date_added.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(bookmark.date_added)
+            
             self.bookmarks_tree.insert(
                 "",
                 tk.END,
                 values=(
                     bookmark.title,
                     bookmark.url,
-                    bookmark.rating if bookmark.rating else ""
+                    bookmark.rating if bookmark.rating else "",
+                    date_str
                 ),
                 tags=(bookmark.url,)  # Use URL as a tag for lookup
             )
@@ -171,6 +220,54 @@ class CategoriesTab:
         # Update status
         self.app.main_window.update_status(f"Category '{category_name}' has {len(bookmarks)} bookmarks")
     
+    def sort_bookmarks(self, bookmarks):
+        """Sort bookmarks by the current sort column and order."""
+        if self.sort_column == "title":
+            return sorted(bookmarks, key=lambda x: x.title.lower(), reverse=self.sort_reverse)
+        elif self.sort_column == "url":
+            return sorted(bookmarks, key=lambda x: x.url.lower(), reverse=self.sort_reverse)
+        elif self.sort_column == "rating":
+            return sorted(bookmarks, key=lambda x: x.rating or 0, reverse=self.sort_reverse)
+        elif self.sort_column == "date_added":
+            return sorted(bookmarks, key=lambda x: getattr(x, 'date_added', datetime.min), reverse=self.sort_reverse)
+        else:
+            return bookmarks
+    
+    def sort_by_column(self, column):
+        """Sort bookmarks by clicking on column header."""
+        if self.sort_column == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            self.sort_reverse = False
+        
+        self.sort_var.set(column)
+        self.update_sort_order_button()
+        self.refresh_current_category()
+    
+    def on_sort_change(self, event=None):
+        """Handle sort dropdown change."""
+        self.sort_column = self.sort_var.get()
+        self.sort_reverse = False
+        self.update_sort_order_button()
+        self.refresh_current_category()
+    
+    def toggle_sort_order(self):
+        """Toggle sort order between ascending and descending."""
+        self.sort_reverse = not self.sort_reverse
+        self.update_sort_order_button()
+        self.refresh_current_category()
+    
+    def update_sort_order_button(self):
+        """Update the sort order button text."""
+        self.sort_order_button.config(text="↓" if self.sort_reverse else "↑")
+    
+    def refresh_current_category(self):
+        """Refresh the current category display with current sort settings."""
+        selection = self.categories_listbox.curselection()
+        if selection:
+            self.on_category_select(None)
+
     def on_bookmark_double_click(self, event):
         """Handle double-click on a bookmark."""
         selection = self.bookmarks_tree.selection()

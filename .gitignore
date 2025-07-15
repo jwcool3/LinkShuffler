@@ -11,3 +11,7 @@ views/__pycache__/categories_tab.cpython-311.pyc
 views/__pycache__/home_tab.cpython-311.pyc
 views/__pycache__/main_window.cpython-311.pyc
 views/__pycache__/manage_tab.cpython-311.pyc
+
+*.pyc
+*.cpython-311.pyc
+*.cpython-310.pyc
