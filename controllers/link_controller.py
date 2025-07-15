@@ -1,11 +1,13 @@
 import random
 import webbrowser
 from tkinter import simpledialog, messagebox
-from models import Bookmark, Category
+from models.bookmark import Bookmark
+from models.category import Category
+from datetime import datetime
 
 class LinkController:
     """
-    Controller for managing bookmarks and link operations.
+    Controller for handling bookmark and category operations.
     """
     def __init__(self, app):
         """
@@ -15,12 +17,12 @@ class LinkController:
             app: The main application instance
         """
         self.app = app
-        self.shown_links = set()  # Track URLs that have been shown in shuffle
-        self.shuffled_bookmarks = []  # Currently shuffled bookmarks
+        self.shown_links = set()  # Track shown links for shuffle
+        self.shuffled_bookmarks = []  # Current shuffled bookmarks
     
-    def add_bookmark(self, url, title, category="Uncategorized", rating=None):
+    def create_bookmark(self, url, title, category="Uncategorized", rating=None):
         """
-        Add a new bookmark.
+        Create a new bookmark or update an existing one.
         
         Args:
             url (str): The URL of the bookmark
@@ -34,11 +36,14 @@ class LinkController:
         # Check if bookmark already exists
         for bookmark in self.app.bookmarks:
             if bookmark.url == url:
-                # Update existing bookmark
+                # Update existing bookmark but preserve date_added
+                original_date = getattr(bookmark, 'date_added', datetime.now())
                 bookmark.title = title
                 bookmark.category = category
                 if rating is not None:
                     bookmark.rating = rating
+                # Preserve original date_added
+                bookmark.date_added = original_date
                 return bookmark
         
         # Create new bookmark

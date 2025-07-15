@@ -3,7 +3,8 @@ import re
 import csv
 import os
 from tkinter import filedialog, messagebox
-from models import Bookmark, Category
+from models.bookmark import Bookmark
+from models.category import Category
 from difflib import SequenceMatcher
 
 class FileController:
@@ -55,6 +56,7 @@ class FileController:
                     title = title.strip()
                     url = url.strip()
                     bookmark = Bookmark(url=url, title=title)
+                    # date_added is automatically set in the Bookmark constructor
                     bookmarks.append(bookmark)
                 
                 messagebox.showinfo(

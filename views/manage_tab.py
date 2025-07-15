@@ -342,37 +342,38 @@ class ManageTab:
         
         # Function to add the bookmark
         def add_bookmark():
-            title = title_entry.get().strip()
             url = url_entry.get().strip()
+            title = title_entry.get().strip()
             category = category_var.get()
-            rating_str = rating_var.get()
+            rating = rating_var.get()
             
-            if not title or not url:
-                messagebox.showwarning("Missing Information", "Title and URL are required.")
+            if not url or not title:
+                messagebox.showwarning("Invalid Input", "Please enter both URL and title.")
                 return
             
-            # Validate and normalize URL
-            is_valid, normalized_url, error_msg = validate_and_normalize_url(url)
-            if not is_valid:
-                messagebox.showerror("Invalid URL", f"URL validation failed: {error_msg}")
-                return
+            # Convert rating to integer if provided
+            rating_int = None
+            if rating and rating != "None":
+                try:
+                    rating_int = int(rating)
+                except ValueError:
+                    messagebox.showwarning("Invalid Rating", "Rating must be a number between 1 and 5.")
+                    return
             
-            # Convert rating to int if provided
-            rating = int(rating_str) if rating_str else None
-            
-            # Add bookmark
-            self.app.link_controller.add_bookmark(
-                url=normalized_url,
+            # Create bookmark
+            self.app.link_controller.create_bookmark(
+                url=url,
                 title=title,
                 category=category,
-                rating=rating
+                rating=rating_int
             )
             
             # Close dialog
             dialog.destroy()
             
-            # Update UI
+            # Refresh UI
             self.update_ui()
+            self.app.main_window.update_status(f"Bookmark added: {title}")
         
         # Buttons
         button_frame = ttk.Frame(dialog)

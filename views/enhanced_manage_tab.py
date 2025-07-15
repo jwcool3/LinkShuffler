@@ -829,7 +829,7 @@ class EnhancedManageTab:
                 )
             else:
                 # Add new bookmark
-                self.app.link_controller.add_bookmark(
+                self.app.link_controller.create_bookmark(
                     url=normalized_url, title=title, category=category, rating=rating
                 )
             
