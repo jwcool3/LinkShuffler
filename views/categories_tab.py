@@ -25,6 +25,12 @@ class CategoriesTab:
         self.sort_column = "title"
         self.sort_reverse = False
         
+        # Performance optimization variables
+        self._current_category = None
+        self._cached_bookmarks = {}
+        self._sorted_bookmarks = []
+        self._last_update_time = 0
+        
         # Create top controls frame
         controls_frame = ttk.Frame(self.frame)
         controls_frame.pack(fill=tk.X, pady=10, padx=10)
@@ -61,8 +67,8 @@ class CategoriesTab:
         self.categories_listbox.configure(yscrollcommand=categories_scrollbar.set)
         categories_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Bind selection event
-        self.categories_listbox.bind("<<ListboxSelect>>", self.on_category_select)
+        # Bind selection event with debouncing
+        self.categories_listbox.bind("<<ListboxSelect>>", self._on_category_select_debounced)
         
         # Right panel - Bookmarks in category
         right_frame = ttk.Frame(paned_window)
@@ -159,8 +165,25 @@ class CategoriesTab:
         # Update UI
         self.update_ui()
     
+    def _on_category_select_debounced(self, event):
+        """Debounced category selection handler to prevent excessive updates."""
+        # Cancel any pending updates
+        if hasattr(self, '_update_job'):
+            self.frame.after_cancel(self._update_job)
+        
+        # Schedule the actual update
+        self._update_job = self.frame.after(100, self.on_category_select)
+    
+    def _invalidate_cache(self):
+        """Invalidate the bookmark cache when data changes."""
+        self._cached_bookmarks.clear()
+        self._sorted_bookmarks.clear()
+    
     def update_ui(self):
         """Update the UI state based on application data."""
+        # Invalidate cache when UI is updated
+        self._invalidate_cache()
+        
         # Update categories listbox
         self.categories_listbox.delete(0, tk.END)
         
@@ -174,8 +197,8 @@ class CategoriesTab:
         # Update bookmarks label
         self.bookmarks_label.config(text="Bookmarks")
     
-    def on_category_select(self, event):
-        """Handle category selection."""
+    def on_category_select(self, event=None):
+        """Handle category selection with caching and optimization."""
         selection = self.categories_listbox.curselection()
         if not selection:
             return
@@ -186,8 +209,16 @@ class CategoriesTab:
         # Update bookmarks label
         self.bookmarks_label.config(text=f"Bookmarks in '{category_name}'")
         
-        # Clear current items
-        self.bookmarks_tree.delete(*self.bookmarks_tree.get_children())
+        # Create cache key that includes sort settings
+        cache_key = f"{category_name}_{self.sort_column}_{self.sort_reverse}"
+        
+        # Check if this is the same category AND same sort settings (avoid unnecessary updates)
+        if (self._current_category == category_name and 
+            cache_key in self._cached_bookmarks):
+            self._display_bookmarks_optimized(self._cached_bookmarks[cache_key])
+            return
+        
+        self._current_category = category_name
         
         # Get bookmarks in category
         bookmarks = self.app.link_controller.get_bookmarks_by_category(category_name)
@@ -195,43 +226,118 @@ class CategoriesTab:
         # Sort bookmarks
         sorted_bookmarks = self.sort_bookmarks(bookmarks)
         
+        # Cache the sorted bookmarks
+        self._cached_bookmarks[cache_key] = sorted_bookmarks
+        
         # Display bookmarks
-        for bookmark in sorted_bookmarks:
-            # Get date added (handle both enhanced and regular bookmarks)
-            date_str = "N/A"
-            if hasattr(bookmark, 'date_added') and bookmark.date_added:
-                if isinstance(bookmark.date_added, datetime):
-                    date_str = bookmark.date_added.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(bookmark.date_added)
-            
-            self.bookmarks_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    bookmark.title,
-                    bookmark.url,
-                    bookmark.rating if bookmark.rating else "",
-                    date_str
-                ),
-                tags=(bookmark.url,)  # Use URL as a tag for lookup
-            )
+        self._display_bookmarks_optimized(sorted_bookmarks)
         
         # Update status
         self.app.main_window.update_status(f"Category '{category_name}' has {len(bookmarks)} bookmarks")
     
-    def sort_bookmarks(self, bookmarks):
-        """Sort bookmarks by the current sort column and order."""
-        if self.sort_column == "title":
-            return sorted(bookmarks, key=lambda x: x.title.lower(), reverse=self.sort_reverse)
-        elif self.sort_column == "url":
-            return sorted(bookmarks, key=lambda x: x.url.lower(), reverse=self.sort_reverse)
-        elif self.sort_column == "rating":
-            return sorted(bookmarks, key=lambda x: x.rating or 0, reverse=self.sort_reverse)
-        elif self.sort_column == "date_added":
-            return sorted(bookmarks, key=lambda x: getattr(x, 'date_added', datetime.min), reverse=self.sort_reverse)
+    def _display_bookmarks_optimized(self, bookmarks):
+        """Optimized bookmark display with batch operations."""
+        # Clear current items
+        self.bookmarks_tree.delete(*self.bookmarks_tree.get_children())
+        
+        # For very large datasets, consider virtual scrolling
+        if len(bookmarks) > 1000:
+            self._display_bookmarks_virtual(bookmarks)
         else:
-            return bookmarks
+            self._display_bookmarks_batch(bookmarks)
+    
+    def _display_bookmarks_batch(self, bookmarks):
+        """Display bookmarks in batches to keep UI responsive."""
+        batch_size = 100
+        
+        def insert_batch(start_idx):
+            end_idx = min(start_idx + batch_size, len(bookmarks))
+            
+            # Prepare batch data
+            batch_data = []
+            for i in range(start_idx, end_idx):
+                bookmark = bookmarks[i]
+                
+                # Get date added (handle both enhanced and regular bookmarks)
+                date_str = "N/A"
+                if hasattr(bookmark, 'date_added') and bookmark.date_added:
+                    if isinstance(bookmark.date_added, datetime):
+                        date_str = bookmark.date_added.strftime("%Y-%m-%d")
+                    else:
+                        date_str = str(bookmark.date_added)
+                
+                batch_data.append({
+                    'values': (
+                        bookmark.title,
+                        bookmark.url,
+                        bookmark.rating if bookmark.rating else "",
+                        date_str
+                    ),
+                    'tags': (bookmark.url,)
+                })
+            
+            # Insert batch
+            for item_data in batch_data:
+                self.bookmarks_tree.insert("", tk.END, values=item_data['values'], tags=item_data['tags'])
+            
+            # Schedule next batch if there are more items
+            if end_idx < len(bookmarks):
+                self.frame.after(1, lambda: insert_batch(end_idx))
+        
+        # Start inserting batches
+        if bookmarks:
+            insert_batch(0)
+    
+    def _display_bookmarks_virtual(self, bookmarks):
+        """Virtual scrolling for very large datasets (placeholder for future implementation)."""
+        # For now, just display first 1000 items with a warning
+        self._display_bookmarks_batch(bookmarks[:1000])
+        
+        if len(bookmarks) > 1000:
+            # Add a placeholder item to indicate more items
+            self.bookmarks_tree.insert("", tk.END, values=(
+                f"... and {len(bookmarks) - 1000} more items",
+                "Use filters to narrow down results",
+                "",
+                ""
+            ), tags=("placeholder",))
+    
+    def sort_bookmarks(self, bookmarks):
+        """Sort bookmarks by the current sort column and order with caching."""
+        # Create a cache key for this sort configuration
+        cache_key = f"sort_{self.sort_column}_{self.sort_reverse}_{len(bookmarks)}"
+        
+        # Check if we have cached sorted bookmarks
+        if hasattr(self, '_sort_cache') and cache_key in self._sort_cache:
+            return self._sort_cache[cache_key]
+        
+        # Initialize sort cache if it doesn't exist
+        if not hasattr(self, '_sort_cache'):
+            self._sort_cache = {}
+        
+        # Sort bookmarks
+        if self.sort_column == "title":
+            sorted_bookmarks = sorted(bookmarks, key=lambda x: x.title.lower(), reverse=self.sort_reverse)
+        elif self.sort_column == "url":
+            sorted_bookmarks = sorted(bookmarks, key=lambda x: x.url.lower(), reverse=self.sort_reverse)
+        elif self.sort_column == "rating":
+            sorted_bookmarks = sorted(bookmarks, key=lambda x: x.rating or 0, reverse=self.sort_reverse)
+        elif self.sort_column == "date_added":
+            sorted_bookmarks = sorted(bookmarks, key=lambda x: getattr(x, 'date_added', datetime.min), reverse=self.sort_reverse)
+        else:
+            sorted_bookmarks = bookmarks
+        
+        # Cache the result
+        self._sort_cache[cache_key] = sorted_bookmarks
+        
+        # Limit cache size to prevent memory issues
+        if len(self._sort_cache) > 20:
+            # Remove oldest entries
+            keys_to_remove = list(self._sort_cache.keys())[:5]
+            for key in keys_to_remove:
+                del self._sort_cache[key]
+        
+        return sorted_bookmarks
     
     def sort_by_column(self, column):
         """Sort bookmarks by clicking on column header."""
@@ -263,355 +369,283 @@ class CategoriesTab:
         self.sort_order_button.config(text="↓" if self.sort_reverse else "↑")
     
     def refresh_current_category(self):
-        """Refresh the current category display with current sort settings."""
-        selection = self.categories_listbox.curselection()
-        if selection:
-            self.on_category_select(None)
-
-    def on_bookmark_double_click(self, event):
-        """Handle double-click on a bookmark."""
-        selection = self.bookmarks_tree.selection()
-        if selection:
-            item = selection[0]
-            values = self.bookmarks_tree.item(item, "values")
-            url = values[1]  # URL is the second column
+        """Refresh the currently selected category display."""
+        # Invalidate all caches to force refresh
+        self._invalidate_cache()
+        
+        # Also clear sort cache
+        if hasattr(self, '_sort_cache'):
+            self._sort_cache.clear()
+        
+        # Force refresh by temporarily clearing current category
+        current_category = self._current_category
+        self._current_category = None
+        
+        # Trigger category selection refresh
+        if current_category:
+            # Find the category in the listbox and select it
+            for i in range(self.categories_listbox.size()):
+                if self.categories_listbox.get(i) == current_category:
+                    self.categories_listbox.selection_clear(0, tk.END)
+                    self.categories_listbox.selection_set(i)
+                    break
             
-            # Open URL in browser
-            if url.startswith(('http://', 'https://')):
-                webbrowser.open(url)
-            else:
-                webbrowser.open('https://' + url)
+            # Set current category back and refresh
+            self._current_category = current_category
+            self.on_category_select()
+    
+    def on_bookmark_double_click(self, event):
+        """Handle double-click on bookmark to open it."""
+        self.open_selected_bookmark()
     
     def open_selected_bookmark(self):
-        """Open the selected bookmark in a web browser."""
+        """Open the selected bookmark in the default browser."""
         selection = self.bookmarks_tree.selection()
-        if selection:
-            item = selection[0]
-            values = self.bookmarks_tree.item(item, "values")
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a bookmark to open.")
+            return
+        
+        # Get the bookmark URL from the selected item
+        item = selection[0]
+        values = self.bookmarks_tree.item(item, "values")
+        
+        if values and len(values) > 1:
             url = values[1]  # URL is the second column
             
+            # Skip placeholder items
+            if url == "Use filters to narrow down results":
+                return
+            
             # Open URL in browser
-            if url.startswith(('http://', 'https://')):
+            try:
                 webbrowser.open(url)
-            else:
-                webbrowser.open('https://' + url)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open URL: {str(e)}")
+    
+    def get_selected_bookmark(self):
+        """Get the bookmark object for the selected tree item."""
+        selection = self.bookmarks_tree.selection()
+        if not selection:
+            return None
+        
+        # Get the bookmark URL from the selected item
+        item = selection[0]
+        values = self.bookmarks_tree.item(item, "values")
+        
+        if values and len(values) > 1:
+            url = values[1]  # URL is the second column
+            
+            # Skip placeholder items
+            if url == "Use filters to narrow down results":
+                return None
+            
+            # Find the bookmark object
+            for bookmark in self.app.bookmarks:
+                if bookmark.url == url:
+                    return bookmark
+        
+        return None
+    
+    def remove_from_category(self):
+        """Remove the selected bookmark from its current category."""
+        bookmark = self.get_selected_bookmark()
+        if not bookmark:
+            messagebox.showwarning("No Selection", "Please select a bookmark to remove.")
+            return
+        
+        # Confirm removal
+        if messagebox.askyesno("Confirm Removal", 
+                              f"Remove '{bookmark.title}' from category '{bookmark.category}'?"):
+            # Update bookmark category to Uncategorized
+            self.app.link_controller.update_bookmark(bookmark, category="Uncategorized")
+            
+            # Refresh display
+            self.refresh_current_category()
+            
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()
+    
+    def delete_selected_bookmark(self):
+        """Delete the selected bookmark entirely."""
+        bookmark = self.get_selected_bookmark()
+        if not bookmark:
+            messagebox.showwarning("No Selection", "Please select a bookmark to delete.")
+            return
+        
+        # Confirm deletion
+        if messagebox.askyesno("Confirm Deletion", 
+                              f"Permanently delete '{bookmark.title}'?"):
+            # Delete bookmark
+            self.app.link_controller.delete_bookmark(bookmark)
+            
+            # Refresh display
+            self.refresh_current_category()
+            
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()
+    
+    def move_to_category(self):
+        """Move the selected bookmark to another category."""
+        bookmark = self.get_selected_bookmark()
+        if not bookmark:
+            messagebox.showwarning("No Selection", "Please select a bookmark to move.")
+            return
+        
+        # Get list of categories
+        categories = [c.name for c in self.app.categories if c.name != bookmark.category]
+        
+        if not categories:
+            messagebox.showinfo("No Categories", "No other categories available.")
+            return
+        
+        # Show category selection dialog
+        from tkinter import simpledialog
+        
+        class CategorySelectionDialog:
+            def __init__(self, parent, categories):
+                self.result = None
+                
+                # Create dialog
+                self.dialog = tk.Toplevel(parent)
+                self.dialog.title("Select Category")
+                self.dialog.geometry("300x200")
+                self.dialog.transient(parent)
+                self.dialog.grab_set()
+                
+                # Category listbox
+                ttk.Label(self.dialog, text="Select target category:").pack(pady=10)
+                
+                self.category_listbox = tk.Listbox(self.dialog, selectmode=tk.SINGLE)
+                self.category_listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+                
+                for category in sorted(categories):
+                    self.category_listbox.insert(tk.END, category)
+                
+                # Buttons
+                button_frame = ttk.Frame(self.dialog)
+                button_frame.pack(fill=tk.X, pady=10)
+                
+                ttk.Button(button_frame, text="OK", command=self.ok_clicked).pack(side=tk.LEFT, padx=5)
+                ttk.Button(button_frame, text="Cancel", command=self.cancel_clicked).pack(side=tk.LEFT, padx=5)
+                
+                # Center dialog
+                self.dialog.update_idletasks()
+                x = (self.dialog.winfo_screenwidth() // 2) - (150)
+                y = (self.dialog.winfo_screenheight() // 2) - (100)
+                self.dialog.geometry(f"300x200+{x}+{y}")
+            
+            def ok_clicked(self):
+                selection = self.category_listbox.curselection()
+                if selection:
+                    self.result = self.category_listbox.get(selection[0])
+                self.dialog.destroy()
+            
+            def cancel_clicked(self):
+                self.dialog.destroy()
+        
+        # Show dialog
+        dialog = CategorySelectionDialog(self.frame, categories)
+        self.frame.wait_window(dialog.dialog)
+        
+        if dialog.result:
+            # Move bookmark to selected category
+            self.app.link_controller.update_bookmark(bookmark, category=dialog.result)
+            
+            # Refresh display
+            self.refresh_current_category()
+            
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()
     
     def add_category(self):
         """Add a new category."""
-        category_name = simpledialog.askstring("Add Category", "Enter category name:")
-        if not category_name:
-            return
-        
-        # Check if category already exists
-        if any(c.name == category_name for c in self.app.categories):
-            messagebox.showwarning("Category Exists", f"Category '{category_name}' already exists.")
-            return
-        
-        # Create category
-        self.app.link_controller._ensure_category_exists(category_name)
-        
-        # Update UI
-        self.update_ui()
-        self.app.main_window.update_status(f"Category '{category_name}' created")
+        name = simpledialog.askstring("Add Category", "Enter category name:")
+        if name:
+            # Create new category
+            self.app.link_controller._ensure_category_exists(name)
+            
+            # Update UI
+            self.update_ui()
+            
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()
     
     def rename_category(self):
         """Rename the selected category."""
         selection = self.categories_listbox.curselection()
         if not selection:
-            messagebox.showinfo("No Selection", "Please select a category to rename.")
+            messagebox.showwarning("No Selection", "Please select a category to rename.")
             return
         
-        # Get selected category
         old_name = self.categories_listbox.get(selection[0])
         
-        # Prevent renaming "Uncategorized"
         if old_name == "Uncategorized":
-            messagebox.showwarning("Cannot Rename", "The 'Uncategorized' category cannot be renamed.")
+            messagebox.showwarning("Cannot Rename", "Cannot rename the 'Uncategorized' category.")
             return
         
-        # Ask for new name
-        new_name = simpledialog.askstring("Rename Category", "Enter new category name:", initialvalue=old_name)
-        if not new_name or new_name == old_name:
-            return
-        
-        # Check if new name already exists
-        if any(c.name == new_name for c in self.app.categories):
-            messagebox.showwarning("Category Exists", f"Category '{new_name}' already exists.")
-            return
-        
-        # Find category object
-        category = None
-        for c in self.app.categories:
-            if c.name == old_name:
-                category = c
-                break
-        
-        if not category:
-            messagebox.showerror("Error", "Category not found.")
-            return
-        
-        # Update all bookmarks in this category
-        for bookmark in category.bookmarks[:]:  # Create a copy to safely modify during iteration
-            self.app.link_controller.update_bookmark(bookmark, category=new_name)
-        
-        # Update category name
-        category.name = new_name
-        
-        # Update UI
-        self.update_ui()
-        self.app.main_window.update_status(f"Category renamed to '{new_name}'")
+        new_name = simpledialog.askstring("Rename Category", f"Enter new name for '{old_name}':")
+        if new_name and new_name != old_name:
+            # Update all bookmarks in this category
+            for bookmark in self.app.bookmarks:
+                if bookmark.category == old_name:
+                    bookmark.category = new_name
+            
+            # Update category object
+            for category in self.app.categories:
+                if category.name == old_name:
+                    category.name = new_name
+                    break
+            
+            # Invalidate cache
+            self._invalidate_cache()
+            
+            # Update UI
+            self.update_ui()
+            
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()
     
     def delete_category(self):
         """Delete the selected category."""
         selection = self.categories_listbox.curselection()
         if not selection:
-            messagebox.showinfo("No Selection", "Please select a category to delete.")
+            messagebox.showwarning("No Selection", "Please select a category to delete.")
             return
         
-        # Get selected category
         category_name = self.categories_listbox.get(selection[0])
         
-        # Prevent deleting "Uncategorized"
         if category_name == "Uncategorized":
-            messagebox.showwarning("Cannot Delete", "The 'Uncategorized' category cannot be deleted.")
+            messagebox.showwarning("Cannot Delete", "Cannot delete the 'Uncategorized' category.")
             return
         
-        # Find category object
-        category = None
-        for c in self.app.categories:
-            if c.name == category_name:
-                category = c
-                break
-        
-        if not category:
-            messagebox.showerror("Error", "Category not found.")
-            return
-        
-        # Check if category has bookmarks
-        if category.bookmarks:
-            # Ask what to do with bookmarks
-            dialog = tk.Toplevel(self.app.root)
-            dialog.title("Delete Category")
-            dialog.transient(self.app.root)
-            dialog.grab_set()
-            dialog.geometry("400x150")
-            
-            ttk.Label(
-                dialog,
-                text=f"Category '{category_name}' has {len(category.bookmarks)} bookmarks.\nWhat would you like to do with them?"
-            ).pack(padx=10, pady=10)
-            
-            action_var = tk.StringVar(value="move")
-            move_radio = ttk.Radiobutton(dialog, text="Move to 'Uncategorized'", variable=action_var, value="move")
-            move_radio.pack(anchor=tk.W, padx=10)
-            
-            delete_radio = ttk.Radiobutton(dialog, text="Delete bookmarks", variable=action_var, value="delete")
-            delete_radio.pack(anchor=tk.W, padx=10)
-            
-            def on_confirm():
-                action = action_var.get()
-                
-                if action == "move":
-                    # Move bookmarks to Uncategorized
-                    for bookmark in category.bookmarks[:]:  # Create a copy to safely modify during iteration
-                        self.app.link_controller.update_bookmark(bookmark, category="Uncategorized")
-                else:
-                    # Delete bookmarks
-                    for bookmark in category.bookmarks[:]:  # Create a copy to safely modify during iteration
-                        self.app.link_controller.delete_bookmark(bookmark)
-                
-                # Remove category
-                self.app.categories.remove(category)
-                
-                # Update UI
-                dialog.destroy()
-                self.update_ui()
-                self.app.main_window.update_status(f"Category '{category_name}' deleted")
-            
-            # Buttons
-            button_frame = ttk.Frame(dialog)
-            button_frame.pack(pady=10)
-            
-            ttk.Button(button_frame, text="Confirm", command=on_confirm).pack(side=tk.LEFT, padx=5)
-            ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-        else:
-            # No bookmarks, just confirm deletion
-            if messagebox.askyesno("Confirm Deletion", f"Are you sure you want to delete the category '{category_name}'?"):
-                # Remove category
-                self.app.categories.remove(category)
-                
-                # Update UI
-                self.update_ui()
-                self.app.main_window.update_status(f"Category '{category_name}' deleted")
-    
-    def remove_from_category(self):
-        """Remove selected bookmark from the current category."""
-        # Get selected bookmark
-        selection = self.bookmarks_tree.selection()
-        if not selection:
-            messagebox.showinfo("No Selection", "Please select a bookmark to remove from the category.")
-            return
-        
-        # Get selected category
-        category_selection = self.categories_listbox.curselection()
-        if not category_selection:
-            messagebox.showinfo("No Category", "Please select a category first.")
-            return
-        
-        category_name = self.categories_listbox.get(category_selection[0])
-        
-        # Prevent removing from "Uncategorized"
-        if category_name == "Uncategorized":
-            messagebox.showwarning("Cannot Remove", "Bookmarks cannot be removed from the 'Uncategorized' category.")
-            return
-        
-        # Get selected bookmark
-        item = selection[0]
-        values = self.bookmarks_tree.item(item, "values")
-        url = values[1]  # URL is the second column
-        
-        # Find bookmark object
-        bookmark = None
-        for b in self.app.bookmarks:
-            if b.url == url:
-                bookmark = b
-                break
-        
-        if not bookmark:
-            messagebox.showerror("Error", "Bookmark not found.")
-            return
-        
-        # Move to Uncategorized
-        self.app.link_controller.update_bookmark(bookmark, category="Uncategorized")
-        
-        # Update UI
-        self.update_ui()
-        
-        # Re-select the category to update the view
-        self.categories_listbox.selection_set(category_selection)
-        self.on_category_select(None)
-        
-        self.app.main_window.update_status(f"Bookmark removed from category '{category_name}'")
-    
-    def delete_selected_bookmark(self):
-        """Delete the selected bookmark."""
-        selection = self.bookmarks_tree.selection()
-        if not selection:
-            messagebox.showinfo("No Selection", "Please select a bookmark to delete.")
-            return
+        # Count bookmarks in category
+        bookmark_count = len(self.app.link_controller.get_bookmarks_by_category(category_name))
         
         # Confirm deletion
-        if not messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete the selected bookmark?"):
-            return
+        message = f"Delete category '{category_name}'?"
+        if bookmark_count > 0:
+            message += f"\n{bookmark_count} bookmarks will be moved to 'Uncategorized'."
         
-        # Get selected bookmark
-        item = selection[0]
-        values = self.bookmarks_tree.item(item, "values")
-        url = values[1]  # URL is the second column
-        
-        # Find bookmark object
-        bookmark = None
-        for b in self.app.bookmarks:
-            if b.url == url:
-                bookmark = b
-                break
-        
-        if not bookmark:
-            messagebox.showerror("Error", "Bookmark not found.")
-            return
-        
-        # Delete bookmark
-        if self.app.link_controller.delete_bookmark(bookmark):
-            # Get selected category to restore selection after update
-            category_selection = self.categories_listbox.curselection()
+        if messagebox.askyesno("Confirm Deletion", message):
+            # Move all bookmarks to Uncategorized
+            for bookmark in self.app.bookmarks:
+                if bookmark.category == category_name:
+                    bookmark.category = "Uncategorized"
+            
+            # Remove category
+            self.app.categories = [c for c in self.app.categories if c.name != category_name]
+            
+            # Invalidate cache
+            self._invalidate_cache()
             
             # Update UI
             self.update_ui()
             
-            # Re-select the category
-            if category_selection:
-                self.categories_listbox.selection_set(category_selection)
-                self.on_category_select(None)
-            
-            self.app.main_window.update_status("Bookmark deleted.")
-    
-    def move_to_category(self):
-        """Move selected bookmark to another category."""
-        # Get selected bookmark
-        selection = self.bookmarks_tree.selection()
-        if not selection:
-            messagebox.showinfo("No Selection", "Please select a bookmark to move.")
-            return
-        
-        # Get selected category
-        category_selection = self.categories_listbox.curselection()
-        if not category_selection:
-            messagebox.showinfo("No Category", "Please select a category first.")
-            return
-        
-        current_category = self.categories_listbox.get(category_selection[0])
-        
-        # Get selected bookmark
-        item = selection[0]
-        values = self.bookmarks_tree.item(item, "values")
-        url = values[1]  # URL is the second column
-        
-        # Find bookmark object
-        bookmark = None
-        for b in self.app.bookmarks:
-            if b.url == url:
-                bookmark = b
-                break
-        
-        if not bookmark:
-            messagebox.showerror("Error", "Bookmark not found.")
-            return
-        
-        # Show dialog to select target category
-        dialog = tk.Toplevel(self.app.root)
-        dialog.title("Move to Category")
-        dialog.transient(self.app.root)
-        dialog.grab_set()
-        dialog.geometry("300x150")
-        
-        ttk.Label(
-            dialog,
-            text=f"Select destination category for bookmark:"
-        ).pack(padx=10, pady=10)
-        
-        # Get all categories except current one
-        category_names = [c.name for c in self.app.categories if c.name != current_category]
-        
-        category_var = tk.StringVar()
-        if category_names:
-            category_var.set(category_names[0])
-        
-        category_combo = ttk.Combobox(
-            dialog,
-            textvariable=category_var,
-            values=category_names,
-            state="readonly",
-            width=30
-        )
-        category_combo.pack(padx=10, pady=5)
-        
-        def on_move():
-            target_category = category_var.get()
-            
-            # Move bookmark
-            self.app.link_controller.update_bookmark(bookmark, category=target_category)
-            
-            # Close dialog
-            dialog.destroy()
-            
-            # Update UI
-            self.on_category_select(None)  # Refresh current category view
-            
-            self.app.main_window.update_status(f"Bookmark moved to category '{target_category}'")
-        
-        # Buttons
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        
-        ttk.Button(button_frame, text="Move", command=on_move).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+            # Update other tabs
+            if hasattr(self.app, 'main_window'):
+                self.app.main_window.update_ui()

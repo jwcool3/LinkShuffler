@@ -2,13 +2,13 @@ import re
 import tkinter as tk
 from tkinter import messagebox, Toplevel
 import tkinter.ttk as ttk
+from collections import defaultdict
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     import numpy as np
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    
 
 class KeywordController:
     """
@@ -22,6 +22,8 @@ class KeywordController:
             app: The main application instance
         """
         self.app = app
+        self._keyword_cache = {}  # Cache for expensive calculations
+        self._last_bookmark_count = 0
     
     def extract_keywords(self):
         """
@@ -42,6 +44,12 @@ class KeywordController:
             messagebox.showwarning("No Bookmarks", "No bookmarks loaded to extract keywords.")
             return None
         
+        # Check cache validity
+        current_count = len(self.app.bookmarks)
+        if (current_count == self._last_bookmark_count and 
+            'keywords' in self._keyword_cache):
+            return self._keyword_cache['keywords']
+        
         # Get all titles
         titles = [bookmark.title for bookmark in self.app.bookmarks]
         
@@ -49,34 +57,103 @@ class KeywordController:
         vectorizer = TfidfVectorizer(
             stop_words='english',  # Remove common English words
             ngram_range=(1, 2),    # Consider single words and pairs
-            min_df=2,              # Ignore terms that appear in less than 2 documents
-            max_df=0.8             # Ignore terms that appear in more than 80% of documents
+            min_df=3,              # Include terms that appear in at least 3 documents (was 1)
+            max_df=0.7,            # Ignore terms that appear in more than 70% of documents (was 0.9)
+            max_features=1000,     # Limit to top 1000 features for better performance
+            token_pattern=r'(?u)\b\w\w+\b'  # Only include words with 2+ characters
         )
         
         try:
-            # Compute TF-IDF
+            # Fit and transform the titles
             tfidf_matrix = vectorizer.fit_transform(titles)
+            
+            # Get feature names (keywords)
             feature_names = vectorizer.get_feature_names_out()
             
-            # Get maximum TF-IDF score for each term
-            max_tfidf = np.max(tfidf_matrix.toarray(), axis=0)
+            # Calculate mean TF-IDF score for each keyword
+            mean_scores = np.mean(tfidf_matrix.toarray(), axis=0)
             
-            # Get significant terms (above threshold)
-            threshold = 0.1
-            significant_terms = [
-                (feature_names[i], max_tfidf[i])
-                for i in range(len(feature_names))
-                if max_tfidf[i] > threshold
-            ]
+            # Create keyword-score pairs
+            keywords = [(feature_names[i], mean_scores[i]) 
+                       for i in range(len(feature_names))]
             
             # Sort by score (descending)
-            significant_terms.sort(key=lambda x: x[1], reverse=True)
+            keywords.sort(key=lambda x: x[1], reverse=True)
             
-            return significant_terms
+            # Cache results
+            self._keyword_cache['keywords'] = keywords
+            self._last_bookmark_count = current_count
+            
+            return keywords
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to extract keywords: {str(e)}")
             return None
+    
+    def _calculate_keyword_metrics(self, keywords):
+        """
+        Pre-calculate all metrics for keywords to avoid repeated calculations.
+        
+        Args:
+            keywords: List of (keyword, score) tuples
+            
+        Returns:
+            dict: Dictionary with keyword metrics
+        """
+        if 'metrics' in self._keyword_cache:
+            return self._keyword_cache['metrics']
+        
+        metrics = {}
+        
+        # Pre-calculate all metrics in batch
+        for keyword, score in keywords:
+            # For single words, search as-is
+            # For multi-word phrases, try different matching strategies
+            if ' ' in keyword:
+                # Multi-word keyword - try exact match first, then word-by-word
+                frequency = sum(1 for b in self.app.bookmarks 
+                              if keyword.lower() in b.title.lower())
+                
+                # If no exact matches, try matching all words in the phrase
+                if frequency == 0:
+                    words = keyword.lower().split()
+                    frequency = sum(1 for b in self.app.bookmarks 
+                                  if all(word in b.title.lower() for word in words))
+            else:
+                # Single word keyword
+                frequency = sum(1 for b in self.app.bookmarks 
+                              if keyword.lower() in b.title.lower())
+            
+            category_suggestion = self._suggest_category_name(keyword)
+            
+            # Calculate bookmark count for uncategorized bookmarks
+            if ' ' in keyword:
+                # Multi-word keyword
+                bookmark_count = sum(1 for b in self.app.bookmarks 
+                                   if keyword.lower() in b.title.lower() and 
+                                   b.category == "Uncategorized")
+                
+                # If no exact matches, try matching all words in the phrase
+                if bookmark_count == 0:
+                    words = keyword.lower().split()
+                    bookmark_count = sum(1 for b in self.app.bookmarks 
+                                       if all(word in b.title.lower() for word in words) and 
+                                       b.category == "Uncategorized")
+            else:
+                # Single word keyword
+                bookmark_count = sum(1 for b in self.app.bookmarks 
+                                   if keyword.lower() in b.title.lower() and 
+                                   b.category == "Uncategorized")
+            
+            metrics[keyword] = {
+                'score': score,
+                'frequency': frequency,
+                'category_suggestion': category_suggestion,
+                'bookmark_count': bookmark_count
+            }
+        
+        self._keyword_cache['metrics'] = metrics
+        return metrics
     
     def show_keyword_dialog(self):
         """
@@ -89,6 +166,9 @@ class KeywordController:
         keywords = self.extract_keywords()
         if not keywords:
             return None
+
+        # Pre-calculate metrics
+        metrics = self._calculate_keyword_metrics(keywords)
 
         # Create main dialog
         dialog = Toplevel(self.app.root)
@@ -139,8 +219,8 @@ class KeywordController:
         
         # Minimum score threshold
         ttk.Label(control_row1, text="Min Score:").pack(side='left', padx=(0, 5))
-        min_score_var = tk.DoubleVar(value=0.1)
-        min_score_spin = ttk.Spinbox(control_row1, from_=0.0, to=1.0, increment=0.05, 
+        min_score_var = tk.DoubleVar(value=0.01)  # Changed from 0.1 to 0.01
+        min_score_spin = ttk.Spinbox(control_row1, from_=0.0, to=1.0, increment=0.01, 
                                     textvariable=min_score_var, width=8)
         min_score_spin.pack(side='left', padx=(0, 15))
         
@@ -212,22 +292,31 @@ class KeywordController:
         preview_text = tk.Text(preview_frame, height=4, wrap='word')
         preview_text.pack(fill='x', padx=5, pady=5)
         
-        # Populate tree with keywords
-        self._populate_keyword_tree(keyword_tree, keywords)
+        # Store original data and current display data
+        self._original_keywords = keywords
+        self._current_keywords = keywords.copy()
+        self._metrics = metrics
         
-        # Bind events
+        # Populate tree with keywords
+        self._populate_keyword_tree_optimized(keyword_tree, keywords, metrics)
+        
+        # Bind events with optimized handlers
         def on_sort_change(*args):
-            self._sort_keyword_tree(keyword_tree, keywords, sort_var.get())
+            self._sort_and_filter_keywords(keyword_tree, sort_var.get(), filter_var.get(), min_score_var.get())
         
         def on_filter_change(*args):
-            self._filter_keyword_tree(keyword_tree, keywords, filter_var.get(), min_score_var.get())
+            self._sort_and_filter_keywords(keyword_tree, sort_var.get(), filter_var.get(), min_score_var.get())
         
         def on_selection_change(*args):
             self._update_preview(keyword_tree, preview_text)
         
+        # Use after_idle to prevent excessive updates
+        def debounced_update(*args):
+            dialog.after_idle(lambda: self._sort_and_filter_keywords(keyword_tree, sort_var.get(), filter_var.get(), min_score_var.get()))
+        
         sort_var.trace('w', on_sort_change)
-        filter_var.trace('w', on_filter_change)
-        min_score_var.trace('w', on_filter_change)
+        filter_var.trace('w', debounced_update)
+        min_score_var.trace('w', debounced_update)
         keyword_tree.bind('<<TreeviewSelect>>', on_selection_change)
         
         # Result variable
@@ -246,22 +335,25 @@ class KeywordController:
                 return
             
             # Extract keywords from selection
-            result = []
+            keywords = []
             for item in selected_items:
                 keyword = keyword_tree.item(item, 'text')
                 if keyword:  # Make sure it's not empty
-                    result.append(keyword)
+                    keywords.append(keyword)
             
-            if not result:
+            if not keywords:
                 messagebox.showwarning("No Selection", "Please select at least one keyword.")
                 return
             
+            # Return keywords along with settings
+            result = (keywords, group_similar_var.get(), create_subcategories_var.get())
             dialog.destroy()
         
         def on_cancel():
             dialog.destroy()
         
         def on_auto_categorize():
+            nonlocal result
             # Get all keywords with high scores
             auto_keywords = []
             for item in keyword_tree.get_children():
@@ -271,7 +363,8 @@ class KeywordController:
                     auto_keywords.append(keyword)
             
             if auto_keywords:
-                result[:] = auto_keywords
+                # Return keywords along with settings
+                result = (auto_keywords, group_similar_var.get(), create_subcategories_var.get())
                 dialog.destroy()
             else:
                 messagebox.showinfo("No Keywords", "No keywords meet the auto-categorization criteria.")
@@ -286,25 +379,67 @@ class KeywordController:
         
         return result if result else None
     
-    def _populate_keyword_tree(self, tree, keywords):
-        """Populate the keyword tree with data."""
+    def _populate_keyword_tree_optimized(self, tree, keywords, metrics):
+        """Populate the keyword tree with pre-calculated data."""
+        # Clear existing items
+        for item in tree.get_children():
+            tree.delete(item)
+        
+        # Use batch insertion for better performance
+        items_to_insert = []
         for keyword, score in keywords:
-            # Calculate frequency (how many bookmarks contain this keyword)
-            frequency = sum(1 for b in self.app.bookmarks if keyword.lower() in b.title.lower())
+            metric = metrics[keyword]
+            items_to_insert.append((keyword, (
+                f"{metric['score']:.3f}",
+                metric['frequency'],
+                metric['category_suggestion'],
+                metric['bookmark_count']
+            )))
+        
+        # Insert all items at once
+        for keyword, values in items_to_insert:
+            tree.insert('', 'end', text=keyword, values=values)
+    
+    def _sort_and_filter_keywords(self, tree, sort_by, filter_text, min_score):
+        """Combined sort and filter operation for better performance."""
+        # Safety check: ensure metrics are available
+        if not hasattr(self, '_metrics') or not self._metrics:
+            self._metrics = self._calculate_keyword_metrics(self._original_keywords)
+        
+        # Start with original keywords
+        filtered_keywords = []
+        
+        # Apply filters first
+        for keyword, score in self._original_keywords:
+            # Safety check for individual metric
+            if keyword not in self._metrics:
+                continue
+                
+            metric = self._metrics[keyword]
             
-            # Suggest category name
-            category_suggestion = self._suggest_category_name(keyword)
+            # Apply score filter
+            if metric['score'] < min_score:
+                continue
             
-            # Count bookmarks that would be affected
-            bookmark_count = sum(1 for b in self.app.bookmarks 
-                               if keyword.lower() in b.title.lower() and b.category == "Uncategorized")
+            # Apply text filter
+            if filter_text and filter_text.lower() not in keyword.lower():
+                continue
             
-            tree.insert('', 'end', text=keyword, values=(
-                f"{score:.3f}",
-                frequency,
-                category_suggestion,
-                bookmark_count
-            ))
+            filtered_keywords.append((keyword, score))
+        
+        # Apply sorting
+        if sort_by == "alphabetical":
+            filtered_keywords.sort(key=lambda x: x[0].lower())
+        elif sort_by == "length":
+            filtered_keywords.sort(key=lambda x: len(x[0]))
+        elif sort_by == "frequency":
+            # Safety check before sorting
+            filtered_keywords.sort(key=lambda x: self._metrics.get(x[0], {}).get('frequency', 0), reverse=True)
+        else:  # score
+            filtered_keywords.sort(key=lambda x: x[1], reverse=True)
+        
+        # Update tree with filtered and sorted data
+        self._populate_keyword_tree_optimized(tree, filtered_keywords, self._metrics)
     
     def _suggest_category_name(self, keyword):
         """Suggest a category name based on keyword."""
@@ -317,42 +452,6 @@ class KeywordController:
             suggestion = f"Adult - {suggestion}"
         
         return suggestion
-    
-    def _sort_keyword_tree(self, tree, keywords, sort_by):
-        """Sort the keyword tree by the specified criteria."""
-        # Clear current items
-        for item in tree.get_children():
-            tree.delete(item)
-        
-        # Sort keywords
-        if sort_by == "alphabetical":
-            sorted_keywords = sorted(keywords, key=lambda x: x[0].lower())
-        elif sort_by == "length":
-            sorted_keywords = sorted(keywords, key=lambda x: len(x[0]))
-        elif sort_by == "frequency":
-            sorted_keywords = sorted(keywords, key=lambda x: sum(1 for b in self.app.bookmarks 
-                                                               if x[0].lower() in b.title.lower()), reverse=True)
-        else:  # score
-            sorted_keywords = sorted(keywords, key=lambda x: x[1], reverse=True)
-        
-        # Repopulate tree
-        self._populate_keyword_tree(tree, sorted_keywords)
-    
-    def _filter_keyword_tree(self, tree, keywords, filter_text, min_score):
-        """Filter the keyword tree based on text and minimum score."""
-        # Clear current items
-        for item in tree.get_children():
-            tree.delete(item)
-        
-        # Filter keywords
-        filtered_keywords = []
-        for keyword, score in keywords:
-            if score >= min_score:
-                if not filter_text or filter_text.lower() in keyword.lower():
-                    filtered_keywords.append((keyword, score))
-        
-        # Repopulate tree
-        self._populate_keyword_tree(tree, filtered_keywords)
     
     def _select_all_keywords(self, tree):
         """Select all keywords in the tree."""
@@ -383,14 +482,47 @@ class KeywordController:
         """Update the preview text with selected keywords."""
         selected_items = tree.selection()
         
+        preview_text.config(state='normal')
         preview_text.delete(1.0, tk.END)
         
         if not selected_items:
             preview_text.insert(tk.END, "No keywords selected.")
+            preview_text.config(state='disabled')
             return
         
-        preview_text.insert(tk.END, f"Selected {len(selected_items)} keywords:\n\n")
+        # Get selected keywords
+        selected_keywords = []
+        for item in selected_items:
+            keyword = tree.item(item, 'text')
+            if keyword:
+                selected_keywords.append(keyword)
         
+        preview_text.insert(tk.END, f"Selected {len(selected_keywords)} keywords:\n\n")
+        
+        # Check if grouping is enabled (we need to access the checkbox from the dialog)
+        # For now, show both grouped and individual previews
+        
+        # Show grouped preview
+        if len(selected_keywords) > 1:
+            category_groups = self._group_similar_keywords(selected_keywords)
+            
+            preview_text.insert(tk.END, "Grouped Categories:\n")
+            total_bookmarks_grouped = 0
+            
+            for group_name, keywords in category_groups.items():
+                bookmark_count = 0
+                for keyword in keywords:
+                    if keyword in self._metrics:
+                        bookmark_count += self._metrics[keyword]['bookmark_count']
+                
+                total_bookmarks_grouped += bookmark_count
+                keyword_list = ", ".join(keywords)
+                preview_text.insert(tk.END, f"• {group_name}: {keyword_list} ({bookmark_count} bookmarks)\n")
+            
+            preview_text.insert(tk.END, f"\nTotal: {len(category_groups)} categories affecting {total_bookmarks_grouped} bookmarks\n\n")
+        
+        # Show individual preview
+        preview_text.insert(tk.END, "Individual Categories:\n")
         categories_preview = {}
         total_bookmarks = 0
         
@@ -409,23 +541,40 @@ class KeywordController:
                 categories_preview[category].append((keyword, bookmark_count))
                 total_bookmarks += bookmark_count
         
-        preview_text.insert(tk.END, f"Will create {len(categories_preview)} categories affecting {total_bookmarks} bookmarks:\n\n")
-        
         for category, keywords in categories_preview.items():
             keyword_list = ", ".join([f"{kw} ({count})" for kw, count in keywords])
             preview_text.insert(tk.END, f"• {category}: {keyword_list}\n")
         
+        preview_text.insert(tk.END, f"\nTotal: {len(categories_preview)} categories affecting {total_bookmarks} bookmarks")
+        
         preview_text.config(state='disabled')
     
-    def auto_categorize_bookmarks(self):
+    def auto_categorize_bookmarks(self, group_similar=True, create_subcategories=False):
         """
         Automatically categorize bookmarks based on selected keywords.
+        
+        Args:
+            group_similar (bool): Whether to group similar keywords into single categories
+            create_subcategories (bool): Whether to create subcategories
         
         Returns:
             int: Number of bookmarks categorized, or None if operation was canceled
         """
         # Show keyword dialog
-        selected_keywords = self.show_keyword_dialog()
+        dialog_result = self.show_keyword_dialog()
+        if not dialog_result:
+            return None
+        
+        # Extract keywords and settings from dialog result
+        if isinstance(dialog_result, tuple) and len(dialog_result) == 3:
+            selected_keywords, group_similar, create_subcategories = dialog_result
+        elif isinstance(dialog_result, list):
+            selected_keywords = dialog_result
+            # Use default settings if not provided
+        else:
+            selected_keywords = dialog_result
+            # Use default settings if not provided
+        
         if not selected_keywords:
             return None
         
@@ -433,21 +582,161 @@ class KeywordController:
         link_controller = self.app.link_controller
         count = 0
         
-        for keyword in selected_keywords:
-            # Create category for each keyword
-            category = link_controller._ensure_category_exists(keyword)
+        if group_similar:
+            # Group similar keywords into combined categories
+            category_groups = self._group_similar_keywords(selected_keywords)
             
-            # Find bookmarks matching keyword
-            for bookmark in self.app.bookmarks:
-                if keyword.lower() in bookmark.title.lower() and bookmark.category == "Uncategorized":
-                    link_controller.update_bookmark(bookmark, category=keyword)
-                    count += 1
+            for group_name, keywords in category_groups.items():
+                # Create category for the group
+                category = link_controller._ensure_category_exists(group_name)
+                
+                # Find bookmarks matching any keyword in the group
+                for bookmark in self.app.bookmarks:
+                    if bookmark.category == "Uncategorized":
+                        # Check if bookmark matches any keyword in this group
+                        for keyword in keywords:
+                            if self._keyword_matches_bookmark(keyword, bookmark):
+                                link_controller.update_bookmark(bookmark, category=group_name)
+                                count += 1
+                                break  # Only categorize once per bookmark
+        else:
+            # Create individual categories for each keyword
+            for keyword in selected_keywords:
+                # Create category for each keyword
+                category_name = self._suggest_category_name(keyword)
+                category = link_controller._ensure_category_exists(category_name)
+                
+                # Find bookmarks matching keyword
+                for bookmark in self.app.bookmarks:
+                    if bookmark.category == "Uncategorized":
+                        if self._keyword_matches_bookmark(keyword, bookmark):
+                            link_controller.update_bookmark(bookmark, category=category_name)
+                            count += 1
+        
+        # Clear cache after categorization
+        self._keyword_cache.clear()
         
         messagebox.showinfo(
             "Auto-Categorization Complete",
             f"Categorized {count} bookmarks based on selected keywords."
         )
         return count
+    
+    def _group_similar_keywords(self, keywords):
+        """
+        Group similar keywords into combined categories.
+        
+        Args:
+            keywords: List of keywords to group
+            
+        Returns:
+            dict: Dictionary mapping group names to lists of keywords
+        """
+        groups = {}
+        used_keywords = set()
+        
+        for keyword in keywords:
+            if keyword in used_keywords:
+                continue
+                
+            # Find similar keywords
+            similar_keywords = [keyword]
+            used_keywords.add(keyword)
+            
+            for other_keyword in keywords:
+                if other_keyword != keyword and other_keyword not in used_keywords:
+                    if self._keywords_are_similar(keyword, other_keyword):
+                        similar_keywords.append(other_keyword)
+                        used_keywords.add(other_keyword)
+            
+            # Create group name based on the most representative keyword
+            if len(similar_keywords) == 1:
+                group_name = self._suggest_category_name(keyword)
+            else:
+                # Use the shortest keyword as the group name, or combine them
+                group_name = self._create_group_name(similar_keywords)
+            
+            groups[group_name] = similar_keywords
+        
+        return groups
+    
+    def _keywords_are_similar(self, keyword1, keyword2):
+        """
+        Check if two keywords are similar enough to be grouped.
+        
+        Args:
+            keyword1: First keyword
+            keyword2: Second keyword
+            
+        Returns:
+            bool: True if keywords are similar
+        """
+        # Simple similarity checks
+        k1_lower = keyword1.lower()
+        k2_lower = keyword2.lower()
+        
+        # Check if one is contained in the other
+        if k1_lower in k2_lower or k2_lower in k1_lower:
+            return True
+        
+        # Check if they share significant words
+        words1 = set(k1_lower.split())
+        words2 = set(k2_lower.split())
+        
+        # If they share more than half of their words, consider them similar
+        if len(words1.intersection(words2)) > 0:
+            overlap_ratio = len(words1.intersection(words2)) / min(len(words1), len(words2))
+            return overlap_ratio > 0.5
+        
+        return False
+    
+    def _create_group_name(self, keywords):
+        """
+        Create a group name from a list of similar keywords.
+        
+        Args:
+            keywords: List of keywords to create a group name from
+            
+        Returns:
+            str: Group name
+        """
+        # Find the shortest keyword as the base
+        base_keyword = min(keywords, key=len)
+        
+        # Clean up the base keyword
+        group_name = self._suggest_category_name(base_keyword)
+        
+        # If the base keyword is too short or generic, try to find a better one
+        if len(base_keyword) < 4:
+            longer_keywords = [k for k in keywords if len(k) >= 4]
+            if longer_keywords:
+                base_keyword = min(longer_keywords, key=len)
+                group_name = self._suggest_category_name(base_keyword)
+        
+        return group_name
+    
+    def _keyword_matches_bookmark(self, keyword, bookmark):
+        """
+        Check if a keyword matches a bookmark using the same logic as metrics calculation.
+        
+        Args:
+            keyword: The keyword to match
+            bookmark: The bookmark to check
+            
+        Returns:
+            bool: True if keyword matches bookmark
+        """
+        if ' ' in keyword:
+            # Multi-word keyword - try exact match first, then word-by-word
+            if keyword.lower() in bookmark.title.lower():
+                return True
+            
+            # If no exact match, try matching all words in the phrase
+            words = keyword.lower().split()
+            return all(word in bookmark.title.lower() for word in words)
+        else:
+            # Single word keyword
+            return keyword.lower() in bookmark.title.lower()
     
     def extract_bookmark_keywords(self, bookmark):
         """

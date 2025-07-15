@@ -2,6 +2,7 @@ import json
 import re
 import csv
 import os
+from datetime import datetime
 from tkinter import filedialog, messagebox
 from models.bookmark import Bookmark
 from models.category import Category
@@ -20,12 +21,12 @@ class FileController:
         """
         self.app = app
     
-    def load_html_bookmarks(self):
+    def import_html_bookmarks(self):
         """
-        Load bookmarks from an HTML file (typically exported from a browser).
+        Import bookmarks from an HTML file.
         
         Returns:
-            list: A list of Bookmark objects, or None if operation was canceled
+            list: List of Bookmark objects, or None if operation failed
         """
         file_path = filedialog.askopenfilename(
             title="Select Bookmark File",
@@ -39,8 +40,10 @@ class FileController:
             with open(file_path, 'r', encoding='utf-8') as file:
                 content = file.read()
                 
-                # Extract links and titles using regex
-                links_data = re.findall(r'<A HREF="(.*?)".*?>(.*?)</A>', content)
+                # Extract links, titles, and dates using regex
+                # Updated regex to capture ADD_DATE attribute
+                bookmark_pattern = r'<A HREF="(.*?)"(?:.*?ADD_DATE="(\d+)")?.*?>(.*?)</A>'
+                links_data = re.findall(bookmark_pattern, content, re.IGNORECASE | re.DOTALL)
                 
                 if not links_data:
                     messagebox.showwarning(
@@ -51,12 +54,24 @@ class FileController:
                 
                 # Create Bookmark objects
                 bookmarks = []
-                for url, title in links_data:
+                for url, add_date, title in links_data:
                     # Clean title and URL
                     title = title.strip()
                     url = url.strip()
+                    
+                    # Create bookmark
                     bookmark = Bookmark(url=url, title=title)
-                    # date_added is automatically set in the Bookmark constructor
+                    
+                    # Set the original date if ADD_DATE is present
+                    if add_date:
+                        try:
+                            # Convert Unix timestamp to datetime
+                            timestamp = int(add_date)
+                            bookmark.date_added = datetime.fromtimestamp(timestamp)
+                        except (ValueError, OSError):
+                            # If conversion fails, keep the default date_added from constructor
+                            pass
+                    
                     bookmarks.append(bookmark)
                 
                 messagebox.showinfo(

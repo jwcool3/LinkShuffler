@@ -346,7 +346,7 @@ class HomeTab:
 
     def load_html_callback(self):
         """Callback for loading HTML bookmarks."""
-        bookmarks = self.app.file_controller.load_html_bookmarks()
+        bookmarks = self.app.file_controller.import_html_bookmarks()
         if bookmarks:
             self.app.bookmarks = bookmarks
             self.update_ui()

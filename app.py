@@ -76,7 +76,7 @@ class BookmarkShufflerApp:
         def auto_save():
             if hasattr(self.main_window, 'manage_tab'):
                 # Save current data
-                self.file_controller.save_to_file(self.config.auto_save_filename)
+                self.file_controller.save_data(self.config.auto_save_filename)
             
             # Schedule next auto-save
             self.root.after(self.config.auto_save_interval * 1000, auto_save)
