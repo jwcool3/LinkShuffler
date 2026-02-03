@@ -1,5 +1,7 @@
 import random
 import webbrowser
+import json
+import os
 from tkinter import simpledialog, messagebox
 from models.bookmark import Bookmark
 from models.category import Category
@@ -19,6 +21,10 @@ class LinkController:
         self.app = app
         self.shown_links = set()  # Track shown links for shuffle
         self.shuffled_bookmarks = []  # Current shuffled bookmarks
+        self.shuffle_history_file = "shuffle_history.json"
+        
+        # Load shuffle history on startup
+        self.load_shuffle_history()
     
     def create_bookmark(self, url, title, category="Uncategorized", rating=None):
         """
@@ -147,13 +153,16 @@ class LinkController:
         # Ensure count is valid
         count = min(count, len(available_bookmarks))
         
-        # Shuffle and select
-        random.shuffle(available_bookmarks)
-        self.shuffled_bookmarks = available_bookmarks[:count]
+        # Use random.sample for better distribution and efficiency
+        # This ensures uniform random selection without modifying the original list
+        self.shuffled_bookmarks = random.sample(available_bookmarks, count)
         
         # Update shown links
         for bookmark in self.shuffled_bookmarks:
             self.shown_links.add(bookmark.url)
+        
+        # Save shuffle history
+        self.save_shuffle_history()
         
         return self.shuffled_bookmarks
     
@@ -229,3 +238,53 @@ class LinkController:
         category = Category(category_name)
         self.app.categories.append(category)
         return category
+    
+    def save_shuffle_history(self):
+        """
+        Save the shuffle history (shown links) to a JSON file.
+        """
+        try:
+            history_data = {
+                "shown_links": list(self.shown_links),
+                "total_bookmarks": len(self.app.bookmarks)
+            }
+            
+            with open(self.shuffle_history_file, 'w', encoding='utf-8') as f:
+                json.dump(history_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving shuffle history: {e}")
+    
+    def load_shuffle_history(self):
+        """
+        Load the shuffle history from a JSON file.
+        """
+        try:
+            if os.path.exists(self.shuffle_history_file):
+                with open(self.shuffle_history_file, 'r', encoding='utf-8') as f:
+                    history_data = json.load(f)
+                    self.shown_links = set(history_data.get("shown_links", []))
+        except Exception as e:
+            print(f"Error loading shuffle history: {e}")
+            self.shown_links = set()
+    
+    def reset_shuffle_history(self):
+        """
+        Reset the shuffle history (clear all shown links).
+        
+        Returns:
+            bool: True if successful
+        """
+        self.shown_links.clear()
+        self.save_shuffle_history()
+        return True
+    
+    def get_shuffle_progress(self):
+        """
+        Get the current shuffle progress.
+        
+        Returns:
+            tuple: (shown_count, total_count) representing shown and total bookmarks
+        """
+        total = len(self.app.bookmarks)
+        shown = len([b for b in self.app.bookmarks if b.url in self.shown_links])
+        return (shown, total)

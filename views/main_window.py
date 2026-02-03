@@ -237,22 +237,84 @@ class MainWindow:
     
     def find_duplicates_callback(self):
         """Callback for finding duplicate bookmarks."""
-        duplicates = self.app.file_controller.find_duplicates()
-        
-        if not duplicates:
-            messagebox.showinfo("No Duplicates", "No duplicate bookmarks found.")
+        if not self.app.bookmarks:
+            messagebox.showinfo("No Bookmarks", "No bookmarks loaded to check for duplicates.")
             return
         
-        # Show duplicates dialog
-        self.show_duplicates_dialog(duplicates)
+        # Show progress dialog
+        progress_dialog = tk.Toplevel(self.root)
+        progress_dialog.title("Finding Duplicates")
+        progress_dialog.geometry("400x150")
+        progress_dialog.transient(self.root)
+        progress_dialog.grab_set()
+        
+        # Center the dialog
+        progress_dialog.update_idletasks()
+        x = (progress_dialog.winfo_screenwidth() // 2) - 200
+        y = (progress_dialog.winfo_screenheight() // 2) - 75
+        progress_dialog.geometry(f"400x150+{x}+{y}")
+        
+        # Progress widgets
+        ttk.Label(progress_dialog, text="Searching for duplicate bookmarks...", 
+                 font=("Arial", 12)).pack(pady=10)
+        
+        progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(progress_dialog, variable=progress_var, 
+                                     maximum=100, length=300)
+        progress_bar.pack(pady=10)
+        
+        status_label = ttk.Label(progress_dialog, text="Initializing...")
+        status_label.pack(pady=5)
+        
+        # Cancel button
+        cancel_button = ttk.Button(progress_dialog, text="Cancel", 
+                                 command=progress_dialog.destroy)
+        cancel_button.pack(pady=5)
+        
+        # Update progress function
+        def update_progress(percent, message):
+            if progress_dialog.winfo_exists():
+                progress_var.set(percent)
+                status_label.config(text=message)
+                progress_dialog.update()
+        
+        # Results callback
+        def on_results(duplicates, error=None):
+            if not progress_dialog.winfo_exists():
+                return  # Dialog was closed
+            
+            progress_dialog.destroy()
+            
+            if error:
+                messagebox.showerror("Error", f"Failed to find duplicates: {error}")
+                return
+            
+            if not duplicates:
+                messagebox.showinfo("No Duplicates", "No duplicate bookmarks found.")
+                return
+            
+            # Show duplicates dialog
+            self.show_duplicates_dialog(duplicates)
+        
+        # Override the progress update method in file_controller
+        self.app.file_controller._update_progress = update_progress
+        
+        # Start async duplicate detection
+        self.app.file_controller.find_duplicates_async(on_results)
     
     def show_duplicates_dialog(self, duplicates):
         """Show dialog with duplicate bookmarks."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Duplicate Bookmarks Found")
-        dialog.geometry("800x600")
+        dialog.geometry("1000x700")
         dialog.transient(self.root)
         dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - 500
+        y = (dialog.winfo_screenheight() // 2) - 350
+        dialog.geometry(f"1000x700+{x}+{y}")
         
         # Create header
         header_frame = ttk.Frame(dialog)
@@ -263,6 +325,10 @@ class MainWindow:
             text=f"Found {len(duplicates)} potential duplicate pairs:",
             font=("Arial", 12, "bold")
         ).pack(anchor=tk.W)
+        
+        # Add progress label for loading
+        progress_label = ttk.Label(header_frame, text="Loading duplicates...")
+        progress_label.pack(anchor=tk.W)
         
         # Create treeview for duplicates
         tree_frame = ttk.Frame(dialog)
@@ -279,11 +345,11 @@ class MainWindow:
         tree.heading("reason", text="Reason")
         
         # Configure column widths
-        tree.column("title1", width=150)
-        tree.column("url1", width=200)
-        tree.column("title2", width=150)
-        tree.column("url2", width=200)
-        tree.column("reason", width=100)
+        tree.column("title1", width=180)
+        tree.column("url1", width=250)
+        tree.column("title2", width=180)
+        tree.column("url2", width=250)
+        tree.column("reason", width=140)
         
         # Add scrollbar
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
@@ -292,16 +358,6 @@ class MainWindow:
         # Pack treeview and scrollbar
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Populate tree with duplicates
-        for bookmark1, bookmark2, reason in duplicates:
-            tree.insert("", tk.END, values=(
-                bookmark1.title,
-                bookmark1.url,
-                bookmark2.title,
-                bookmark2.url,
-                reason
-            ))
         
         # Button frame
         button_frame = ttk.Frame(dialog)
@@ -321,15 +377,33 @@ class MainWindow:
             # Show dialog to choose which one to delete
             choice_dialog = tk.Toplevel(dialog)
             choice_dialog.title("Choose Bookmark to Delete")
-            choice_dialog.geometry("400x200")
+            choice_dialog.geometry("500x250")
             choice_dialog.transient(dialog)
             choice_dialog.grab_set()
             
-            ttk.Label(choice_dialog, text="Which bookmark would you like to delete?").pack(pady=10)
+            # Center the choice dialog
+            choice_dialog.update_idletasks()
+            cx = (choice_dialog.winfo_screenwidth() // 2) - 250
+            cy = (choice_dialog.winfo_screenheight() // 2) - 125
+            choice_dialog.geometry(f"500x250+{cx}+{cy}")
+            
+            ttk.Label(choice_dialog, text="Which bookmark would you like to delete?", 
+                     font=("Arial", 12)).pack(pady=10)
             
             choice_var = tk.StringVar(value="first")
-            ttk.Radiobutton(choice_dialog, text=f"First: {values[0]}", variable=choice_var, value="first").pack(anchor=tk.W, padx=20)
-            ttk.Radiobutton(choice_dialog, text=f"Second: {values[2]}", variable=choice_var, value="second").pack(anchor=tk.W, padx=20)
+            
+            # Create frames for better layout
+            choice_frame = ttk.Frame(choice_dialog)
+            choice_frame.pack(fill=tk.X, padx=20, pady=10)
+            
+            # Truncate long titles for display
+            title1 = values[0][:50] + "..." if len(values[0]) > 50 else values[0]
+            title2 = values[2][:50] + "..." if len(values[2]) > 50 else values[2]
+            
+            ttk.Radiobutton(choice_frame, text=f"First: {title1}", 
+                           variable=choice_var, value="first").pack(anchor=tk.W, pady=5)
+            ttk.Radiobutton(choice_frame, text=f"Second: {title2}", 
+                           variable=choice_var, value="second").pack(anchor=tk.W, pady=5)
             
             def confirm_delete():
                 url_to_delete = url1 if choice_var.get() == "first" else url2
@@ -348,11 +422,85 @@ class MainWindow:
                 self.update_ui()
                 messagebox.showinfo("Success", "Duplicate bookmark deleted.")
             
-            ttk.Button(choice_dialog, text="Delete", command=confirm_delete).pack(side=tk.LEFT, padx=10, pady=10)
-            ttk.Button(choice_dialog, text="Cancel", command=choice_dialog.destroy).pack(side=tk.LEFT, padx=10, pady=10)
+            button_frame_choice = ttk.Frame(choice_dialog)
+            button_frame_choice.pack(pady=10)
+            
+            ttk.Button(button_frame_choice, text="Delete", command=confirm_delete).pack(side=tk.LEFT, padx=10)
+            ttk.Button(button_frame_choice, text="Cancel", command=choice_dialog.destroy).pack(side=tk.LEFT, padx=10)
         
+        # Add buttons
         ttk.Button(button_frame, text="Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        
+        # Add batch operations
+        def delete_all_exact_matches():
+            """Delete all exact URL matches."""
+            if not messagebox.askyesno("Confirm", "Delete all exact URL matches? This will keep the first occurrence of each URL."):
+                return
+            
+            deleted_count = 0
+            items_to_delete = []
+            
+            for item in tree.get_children():
+                values = tree.item(item, "values")
+                if "Exact URL match" in values[4]:
+                    url2 = values[3]  # Delete the second occurrence
+                    
+                    # Find and delete bookmark
+                    for bookmark in self.app.bookmarks[:]:
+                        if bookmark.url == url2:
+                            self.app.link_controller.delete_bookmark(bookmark)
+                            deleted_count += 1
+                            break
+                    
+                    items_to_delete.append(item)
+            
+            # Remove from tree
+            for item in items_to_delete:
+                tree.delete(item)
+            
+            # Update UI
+            self.update_ui()
+            messagebox.showinfo("Success", f"Deleted {deleted_count} exact duplicate bookmarks.")
+        
+        ttk.Button(button_frame, text="Delete All Exact Matches", command=delete_all_exact_matches).pack(side=tk.LEFT, padx=5)
+        
+        # Populate tree with duplicates using batch insertion to prevent freezing
+        def populate_tree_batch():
+            batch_size = 20
+            current_index = 0
+            
+            def insert_batch():
+                nonlocal current_index
+                end_index = min(current_index + batch_size, len(duplicates))
+                
+                for i in range(current_index, end_index):
+                    bookmark1, bookmark2, reason = duplicates[i]
+                    
+                    # Truncate very long titles and URLs for display
+                    title1 = bookmark1.title[:100] + "..." if len(bookmark1.title) > 100 else bookmark1.title
+                    title2 = bookmark2.title[:100] + "..." if len(bookmark2.title) > 100 else bookmark2.title
+                    url1 = bookmark1.url[:150] + "..." if len(bookmark1.url) > 150 else bookmark1.url
+                    url2 = bookmark2.url[:150] + "..." if len(bookmark2.url) > 150 else bookmark2.url
+                    
+                    tree.insert("", tk.END, values=(title1, url1, title2, url2, reason))
+                
+                current_index = end_index
+                progress_label.config(text=f"Loaded {current_index}/{len(duplicates)} duplicates...")
+                
+                if current_index < len(duplicates):
+                    # Schedule next batch
+                    dialog.after(10, insert_batch)
+                else:
+                    # Finished loading
+                    progress_label.config(text=f"Loaded all {len(duplicates)} duplicates.")
+                    dialog.after(2000, lambda: progress_label.destroy())  # Hide progress after 2 seconds
+            
+            # Start batch insertion
+            insert_batch()
+        
+        # Start populating the tree
+        dialog.after(100, populate_tree_batch)
     
     def auto_save_settings_callback(self):
         """Show auto-save settings dialog."""

@@ -122,6 +122,15 @@ class HomeTab:
         )
         self.shuffle_button.pack(side=tk.LEFT, padx=5)
         
+        # Reset shuffle history button
+        self.reset_shuffle_button = ttk.Button(
+            discovery_buttons,
+            text="🔄 Reset Shuffle History",
+            command=self.reset_shuffle_history,
+            width=20
+        )
+        self.reset_shuffle_button.pack(side=tk.LEFT, padx=5)
+        
         # Display options frame
         options_frame = ttk.LabelFrame(self.frame, text="Shuffle Options")
         options_frame.pack(fill=tk.X, pady=10, padx=20)
@@ -216,11 +225,16 @@ class HomeTab:
         # Update status
         bookmark_count = len(self.app.bookmarks)
         if bookmark_count > 0:
-            self.status_var.set(f"{bookmark_count} bookmarks loaded across {len(self.app.categories)} categories.")
+            # Get shuffle progress
+            shown, total = self.app.link_controller.get_shuffle_progress()
+            progress_text = f" | Shuffle Progress: {shown}/{total} shown"
+            self.status_var.set(f"{bookmark_count} bookmarks loaded across {len(self.app.categories)} categories.{progress_text}")
             self.shuffle_button.config(state=tk.NORMAL)
+            self.reset_shuffle_button.config(state=tk.NORMAL)
         else:
             self.status_var.set("No links loaded yet.")
             self.shuffle_button.config(state=tk.DISABLED)
+            self.reset_shuffle_button.config(state=tk.DISABLED)
     
     def shuffle_links(self):
         """Shuffle and display random links."""
@@ -247,33 +261,39 @@ class HomeTab:
         # Adjust num_links if needed
         num_links = min(num_links, len(filtered_bookmarks))
         
-        # Prepare tracking set for shuffle
-        self.app.link_controller.shown_links = {b.url for b in self.app.link_controller.shuffled_bookmarks}
-        
-        # Shuffle bookmarks
-        shuffled = []
+        # Get available bookmarks that haven't been shown yet
         available = [b for b in filtered_bookmarks if b.url not in self.app.link_controller.shown_links]
         
         if not available:
             # All have been shown, reset tracking
+            from tkinter import messagebox
+            messagebox.showinfo("All Links Shown", 
+                              f"You've seen all {len(filtered_bookmarks)} links matching your filters! Resetting shuffle history.")
             self.app.link_controller.shown_links.clear()
             available = filtered_bookmarks
         
-        # Get random bookmarks
+        # Get random bookmarks using random.sample for better distribution
+        # random.sample() is more efficient and ensures no duplicates
         import random
-        random.shuffle(available)
-        shuffled = available[:num_links]
+        shuffled = random.sample(available, min(num_links, len(available)))
         
         # Update tracking
         self.app.link_controller.shuffled_bookmarks = shuffled
         for bookmark in shuffled:
             self.app.link_controller.shown_links.add(bookmark.url)
         
+        # Save shuffle history
+        self.app.link_controller.save_shuffle_history()
+        
         # Display results
         self.display_shuffled_links(shuffled)
         
-        # Update status
-        self.app.main_window.update_status(f"Displaying {len(shuffled)} random bookmarks.")
+        # Update status with progress
+        shown, total = self.app.link_controller.get_shuffle_progress()
+        self.app.main_window.update_status(f"Displaying {len(shuffled)} random bookmarks. Progress: {shown}/{total} shown")
+        
+        # Update UI to reflect new progress
+        self.update_ui()
     
     def display_shuffled_links(self, bookmarks):
         """
@@ -377,3 +397,15 @@ class HomeTab:
         # Update other tabs if needed
         if self.app.main_window:
             self.app.main_window.update_ui()
+    
+    def reset_shuffle_history(self):
+        """Reset the shuffle history."""
+        from tkinter import messagebox
+        
+        # Confirm with user
+        if messagebox.askyesno("Reset Shuffle History", 
+                              "Are you sure you want to reset the shuffle history? This will clear all tracking of shown links."):
+            self.app.link_controller.reset_shuffle_history()
+            self.update_ui()
+            self.app.main_window.update_status("Shuffle history has been reset.")
+            messagebox.showinfo("Success", "Shuffle history has been reset successfully!")
